@@ -8,7 +8,7 @@ export const GET = adminRoute<P>(async (_req, { params }) => {
   if (!UUID_RE.test(id)) return json({ error: "Invalid job id" }, 400);
   const sql = await getDb();
   const [job] = await sql`
-    select id, topic, state, busy, attempts, data, error, created_at, updated_at
+    select id, topic, state, busy, attempts, data, error, scheduled_at, created_at, updated_at
     from jobs where id = ${id}::uuid`;
   if (!job) return json({ error: "Job not found" }, 404);
   const logs = await sql`

@@ -12,6 +12,7 @@ type JobSummary = {
   attempts: number;
   error: string | null;
   busy: boolean;
+  scheduled_at: string;
   updated_at: string;
 };
 type Status = {
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [startAt, setStartAt] = useState(""); // local date and time from the picker; empty means now
 
   const load = useCallback(
     () =>
@@ -52,7 +54,13 @@ export default function Dashboard() {
     setCreating(true);
     setError(null);
     try {
-      const { id } = await api<{ id: string }>("POST", "/api/jobs", { topic });
+      const body: { topic: string; scheduledAt?: string } = { topic };
+      if (startAt) {
+        const when = new Date(startAt); // the picker is in this browser's local time
+        if (Number.isNaN(when.getTime())) throw new Error("Choose a valid start time");
+        body.scheduledAt = when.toISOString();
+      }
+      const { id } = await api<{ id: string }>("POST", "/api/jobs", body);
       router.push(`/jobs/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -87,6 +95,10 @@ export default function Dashboard() {
             placeholder="Topic, for example: why morning walks improve focus"
             maxLength={500}
           />
+          <label className="stack">
+            <span className="muted">Start at (optional, your local time). Leave empty to start now.</span>
+            <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+          </label>
           <div className="row">
             <button className="primary" disabled={creating || topic.trim().length < 3}>
               {creating ? "Starting…" : "Start job"}
@@ -108,6 +120,7 @@ export default function Dashboard() {
                 <th>Topic</th>
                 <th>Status</th>
                 <th>Generation</th>
+                <th>Starts</th>
                 <th>Updated</th>
               </tr>
             </thead>
@@ -123,6 +136,9 @@ export default function Dashboard() {
                     <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
                   </td>
                   <td>{j.attempts}</td>
+                  <td className="muted">
+                    {new Date(j.scheduled_at) > new Date() ? new Date(j.scheduled_at).toLocaleString() : "Now"}
+                  </td>
                   <td className="muted">{new Date(j.updated_at).toLocaleString()}</td>
                 </tr>
               ))}

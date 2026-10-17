@@ -318,6 +318,20 @@ async function main() {
   assert.deepEqual([...NOT_TICKED].sort(), notRunnable);
   ok("cron tick: skips exactly the states the runner will not run (awaiting_review, done, failed)");
 
+  // ---------- job start times ----------
+  const { parseStart } = await import("@/lib/jobs/schedule");
+  const now = new Date("2026-10-18T00:00:00Z");
+  assert.deepEqual(parseStart(undefined, now), { at: null }, "no start time means now");
+  assert.deepEqual(parseStart("", now), { at: null }, "an empty start time means now");
+  const later = parseStart("2026-10-18T06:30:00Z", now);
+  assert.ok("at" in later && later.at?.toISOString() === "2026-10-18T06:30:00.000Z");
+  assert.ok("error" in parseStart("not a date", now), "garbage is refused");
+  assert.ok("error" in parseStart(12345, now), "a non-string is refused");
+  assert.ok("error" in parseStart("2028-01-01T00:00:00Z", now), "more than a year ahead is refused");
+  const past = parseStart("2026-10-01T00:00:00Z", now);
+  assert.ok("at" in past, "a past time is accepted (it starts at once)");
+  ok("job start times: empty means now, garbage and far-future times are refused");
+
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }
 
