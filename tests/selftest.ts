@@ -93,17 +93,17 @@ async function main() {
       {
         name: "instagram_post_photo",
         inputSchema: { properties: { caption: { type: "string" }, image_path_or_url: { type: "string" }, aspect: { type: "string" }, dry_run: { type: "boolean" }, disable_comments: { type: "boolean" } }, required: ["caption", "image_path_or_url"] },
-        handle: () => ({ text: JSON.stringify({ media_id: "17900000001" }) }),
+        handle: () => ({ text: "{'status': 'success', 'media_id': '17900000001', 'url': 'https://www.instagram.com/p/AbC/', 'paced_seconds': 0}" }),
       },
       {
         name: "instagram_comment_on_post",
         inputSchema: { properties: { media_id_or_url: { type: "string" }, text: { type: "string" } }, required: ["media_id_or_url", "text"] },
-        handle: () => ({ text: JSON.stringify({ comment_id: "17800000002" }) }),
+        handle: () => ({ text: "{'status': 'success', 'comment_id': '17800000002', 'media_id_or_url': '17900000001', 'paced_seconds': 0}" }),
       },
       {
         name: "instagram_pin_comment",
         inputSchema: { properties: { comment_id: { type: "string" }, media_id_or_url: { type: "string" }, pin: { type: "boolean" } }, required: ["comment_id", "media_id_or_url"] },
-        handle: () => ({ text: "pinned" }),
+        handle: () => ({ text: "Comment 17800000002 pinned on post 17900000001 (paced 0s)." }),
       },
     ],
   });
@@ -126,6 +126,34 @@ async function main() {
   process.env.INSTAGRAM_MCP_URL = `${igFake.url}?auth=good-key`;
   await igFake.close();
   ok("Instagram: wrong key in the URL is rejected with a clear error");
+
+  // The real server answers errors as plain text with isError false, so the adapter must read the text.
+  const badFake = await startFakeMcp({
+    key: "good-key",
+    tools: [
+      {
+        name: "instagram_post_photo",
+        inputSchema: { properties: { caption: { type: "string" }, image_path_or_url: { type: "string" } }, required: ["caption", "image_path_or_url"] },
+        handle: () => ({ text: "Error while posting the photo: challenge_required" }),
+      },
+      {
+        name: "instagram_comment_on_post",
+        inputSchema: { properties: { media_id_or_url: { type: "string" }, text: { type: "string" } }, required: ["media_id_or_url", "text"] },
+        handle: () => ({ text: "Comments are disabled on that post." }),
+      },
+      {
+        name: "instagram_pin_comment",
+        inputSchema: { properties: { comment_id: { type: "string" }, media_id_or_url: { type: "string" }, pin: { type: "boolean" } }, required: ["comment_id", "media_id_or_url"] },
+        handle: () => ({ text: "Comment 17800000002 unpinned on post 17900000001 (paced 0s)." }),
+      },
+    ],
+  });
+  process.env.INSTAGRAM_MCP_URL = `${badFake.url}?auth=good-key`;
+  await assert.rejects(() => instagram.postPhoto({ imageUrl: "https://app.example.com/x", caption: "hi" }), /did not post the photo: Error while posting/);
+  await assert.rejects(() => instagram.comment({ mediaId: "17900000001", text: "x" }), /did not post the comment: Comments are disabled/);
+  await assert.rejects(() => instagram.pin({ commentId: "17800000002", mediaId: "17900000001" }), /did not pin the comment: Comment 17800000002 unpinned/);
+  await badFake.close();
+  ok("Instagram: error text is an error even though the call succeeds; an unpin is not a pin");
 
   // ---------- Gemini MCP: tool discovery among decoys ----------
   let statusPolls = 0;

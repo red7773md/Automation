@@ -1,7 +1,12 @@
-// Instagram MCP. Tool names and argument names come from the published schema of
-// the Instagram connector (instagram_post_photo, instagram_comment_on_post, instagram_pin_comment).
+// Instagram MCP. Tool and argument names come from red7773md/instagram-mcp-api
+// (instagram_mcp_server/mcp_server.py): instagram_post_photo, instagram_comment_on_post,
+// instagram_pin_comment.
+//
+// That server does not answer with JSON. Post and comment return a Python dict as text
+// ("{'status': 'success', 'media_id': '179...', ...}"), and errors come back as ordinary
+// text ("Error while posting the photo: ...") with isError false. So success is read from
+// the text, and anything else is an error.
 import { withMcp, type McpClient, type McpTool } from "./mcp";
-import { findValue, parseJsonSafe } from "./parse";
 import type { Providers, ToolSummary } from "./types";
 
 const NAME = {
@@ -31,12 +36,14 @@ async function call(name: string, args: Record<string, unknown>): Promise<string
   });
 }
 
-function idFrom(text: string, keys: string[], what: string): string {
-  const fromJson = findValue(parseJsonSafe(text), keys);
-  if (fromJson) return fromJson;
-  const digits = text.match(/\b\d{8,}\b/);
-  if (digits) return digits[0];
-  throw new Error(`Could not read the ${what} id from the Instagram MCP reply: ${text.slice(0, 300)}`);
+/** One value from a reply: a Python dict ('key': 'value') or JSON ("key": "value"). */
+export function field(text: string, key: string): string | undefined {
+  const m = text.match(new RegExp(`['"]${key}['"]\\s*:\\s*['"]?([^'",}\\s]+)`));
+  return m?.[1];
+}
+
+function isSuccess(text: string): boolean {
+  return field(text, "status") === "success";
 }
 
 export const instagram: Providers["instagram"] = {
@@ -59,16 +66,26 @@ export const instagram: Providers["instagram"] = {
       disable_comments: false,
       dry_run: false,
     });
-    return { mediaId: idFrom(raw, ["media_id", "mediaId", "id", "pk"], "media"), raw };
+    if (!isSuccess(raw)) throw new Error(`Instagram did not post the photo: ${raw.slice(0, 400)}`);
+    const mediaId = field(raw, "media_id");
+    if (!mediaId) throw new Error(`Instagram reported success but gave no media id: ${raw.slice(0, 300)}`);
+    return { mediaId, raw };
   },
 
   async comment({ mediaId, text }) {
     const raw = await call(NAME.comment, { media_id_or_url: mediaId, text });
-    return { commentId: idFrom(raw, ["comment_id", "commentId", "id", "pk"], "comment"), raw };
+    if (!isSuccess(raw)) throw new Error(`Instagram did not post the comment: ${raw.slice(0, 400)}`);
+    const commentId = field(raw, "comment_id");
+    if (!commentId) throw new Error(`Instagram reported success but gave no comment id: ${raw.slice(0, 300)}`);
+    return { commentId, raw };
   },
 
   async pin({ commentId, mediaId }) {
     const raw = await call(NAME.pin, { comment_id: commentId, media_id_or_url: mediaId, pin: true });
+    // Success reads "Comment <id> pinned on post <id> (paced Ns)." An unpin reads "unpinned", so anchor on the start.
+    if (!/^Comment \S+ pinned on post /.test(raw.trim())) {
+      throw new Error(`Instagram did not pin the comment: ${raw.slice(0, 400)}`);
+    }
     return { raw };
   },
 };
