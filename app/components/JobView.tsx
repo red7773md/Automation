@@ -21,7 +21,7 @@ type LogRow = {
   created_at: string;
 };
 type Detail = { job: JobRow; logs: LogRow[] };
-type Advance = { status: "progressed" | "pending" | "busy" | "idle" | "failed"; state: State; error?: string };
+type Advance = { status: "progressed" | "pending" | "busy" | "idle" | "failed" | "scheduled"; state: State; error?: string };
 
 const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "ok", failed: "bad" };
 
@@ -39,7 +39,11 @@ export default function JobView({ id }: { id: string }) {
     return d;
   }, [id]);
 
-  const advance = useCallback(() => api<Advance>("POST", `/api/jobs/${id}/advance`), [id]);
+  // force = true for the button: it runs now even if the start time has not come.
+  const advance = useCallback(
+    (force: boolean) => api<Advance>("POST", `/api/jobs/${id}/advance`, { force }),
+    [id],
+  );
 
   // Auto-run loop: fetch state, run one step if runnable, schedule the next tick.
   // Pending external work (research polling) waits longer between ticks.
@@ -55,7 +59,7 @@ export default function JobView({ id }: { id: string }) {
         if (stopped) return;
         setError(null);
         if (auto && RUNNABLE.includes(d.job.state) && !d.job.busy) {
-          const r = await advance();
+          const r = await advance(false);
           if (stopped) return;
           later(r.status === "pending" ? 4000 : r.status === "busy" ? 2000 : r.status === "failed" ? 3000 : 300);
           return;
@@ -169,7 +173,7 @@ export default function JobView({ id }: { id: string }) {
               <button
                 className="primary"
                 disabled={!canRun}
-                onClick={() => run(() => advance())}
+                onClick={() => run(() => advance(true))}
               >
                 Run next step
               </button>

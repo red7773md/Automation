@@ -4,29 +4,33 @@ import { RUNNABLE, type JobRow, type State } from "./states";
 import { runStep } from "./steps";
 
 export type AdvanceResult = {
-  status: "progressed" | "pending" | "busy" | "idle" | "failed";
+  status: "progressed" | "pending" | "busy" | "idle" | "failed" | "scheduled";
   state: State;
   note?: string;
   error?: string;
 };
 
-
 /**
  * Runs exactly one step of one job. The atomic UPDATE is the lock: if another
  * request already holds it, this returns "busy" and nothing runs twice.
+ * A job whose start time has not come yet returns "scheduled". `force` ignores
+ * the start time (the "Run next step" button sets it).
  */
-export async function advanceJob(id: string): Promise<AdvanceResult | null> {
+export async function advanceJob(id: string, opts: { force?: boolean } = {}): Promise<AdvanceResult | null> {
+  const force = opts.force === true;
   const sql = await getDb();
 
   const claimed = await sql`
     update jobs set busy = true, updated_at = now()
     where id = ${id}::uuid
       and (busy = false or updated_at < now() - interval '6 minutes')
+      and (${force}::boolean or scheduled_at <= now())
     returning *`;
 
   if (claimed.length === 0) {
-    const [cur] = await sql`select state from jobs where id = ${id}::uuid`;
+    const [cur] = await sql`select state, scheduled_at > now() as later from jobs where id = ${id}::uuid`;
     if (!cur) return null;
+    if (cur.later && !force) return { status: "scheduled", state: cur.state as State };
     return { status: "busy", state: cur.state as State };
   }
 

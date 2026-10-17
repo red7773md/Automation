@@ -31,8 +31,8 @@ export const POST = adminRoute<P>(async (req, { params }) => {
   }
 
   if (action === "reject") {
-    const plan = job.data.plan;
-    const nextPrompt = `${plan.imagePrompt}\n\nReviewer notes: ${feedback || "fix the problems visible in the previous image"}`;
+    const basePrompt = job.data.imagePrompt ?? job.data.plan?.imagePrompt ?? "";
+    const nextPrompt = `${basePrompt}\n\nReviewer notes: ${feedback || "fix the problems visible in the previous image"}`;
     const [ok] = await sql`
       update jobs set state = 'generating', error = null, updated_at = now(),
         data = data || ${JSON.stringify({ nextPrompt, reviewFeedback: feedback })}::jsonb

@@ -25,7 +25,8 @@ const missingGemini: Providers["gemini"] = {
   health: async () => ({ ok: false, message: NOT_SET_GEMINI }),
   startResearch: async () => { throw new Error(NOT_SET_GEMINI); },
   pollResearch: async () => { throw new Error(NOT_SET_GEMINI); },
-  plan: async () => { throw new Error(NOT_SET_GEMINI); },
+  analyze: async () => { throw new Error(NOT_SET_GEMINI); },
+  caption: async () => { throw new Error(NOT_SET_GEMINI); },
   verifyImage: async () => { throw new Error(NOT_SET_GEMINI); },
   generateImage: async () => { throw new Error(NOT_SET_GEMINI); },
 };

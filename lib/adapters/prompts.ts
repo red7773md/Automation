@@ -1,15 +1,26 @@
 // Prompts sent to Gemini through MCP. The HTTP bridge has its own copy in Python.
-export const PLAN_PROMPT = `You are preparing an Instagram post from a research report.
-Return ONLY a JSON object with exactly these three string keys:
-- "caption": a short hook (at most two sentences) followed by 5 to 10 relevant hashtags.
-- "commentBody": the detailed description for the first comment, factual and readable, at most 1800 characters, using short paragraphs or bullet lines.
-- "imagePrompt": a detailed prompt for an image generator. Square composition. No text, letters or numbers in the image. No real people's faces, logos or brand names.
+export const ANALYZE_PROMPT = `You are preparing an Instagram post from a deep research report.
+Return ONLY a JSON object with exactly these two string keys:
+- "analysis": the key findings, what matters most to a general audience, and the angle that will work best on Instagram. Plain language, at most 1500 characters.
+- "imagePrompt": a detailed prompt for an image generator that suits this angle. Square composition. No text, letters or numbers in the image. No real people's faces, logos or brand names.
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
 
 Topic: {topic}
 
 Research report:
 {report}
+`;
+
+export const CAPTION_PROMPT = `You are writing the text for an Instagram post. The image is already made, and the analysis below describes the angle.
+Return ONLY a JSON object with exactly these two string keys:
+- "caption": a short hook (at most two sentences), then 8 to 12 relevant hashtags on the last line, chosen to reach people searching for this topic. Keep the whole caption under 1200 characters.
+- "commentBody": the detailed description for the pinned comment: factual and readable, short paragraphs or bullet lines, at most 1800 characters. Do not repeat the hashtags here.
+Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
+
+Topic: {topic}
+
+Analysis:
+{analysis}
 `;
 
 export const VERIFY_PROMPT = `You are checking an AI-generated image before it is posted to Instagram.

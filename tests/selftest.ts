@@ -153,7 +153,10 @@ async function main() {
       name: "gemini_chat",
       description: "Send a prompt to Gemini and get a text reply",
       inputSchema: { properties: { prompt: { type: "string" } } },
-      handle: () => ({ text: 'Here you go:\n```json\n{"caption":"Coffee hook #coffee","commentBody":"Details","imagePrompt":"a cup of coffee"}\n```' }),
+      handle: (args) =>
+        String(args.prompt).includes('"analysis"')
+          ? { text: 'Analysis:\n```json\n{"analysis":"Coffee angle for Instagram","imagePrompt":"a cup of coffee"}\n```' }
+          : { text: 'Here you go:\n```json\n{"caption":"Coffee hook #coffee","commentBody":"Details"}\n```' },
     },
     {
       name: "gemini_analyze_image",
@@ -167,14 +170,15 @@ async function main() {
   const pick = resolve("gemini", gServerTools as any);
   assert.equal(pick.map.startResearch?.tool, "gemini_start_deep_research");
   assert.equal(pick.map.pollResearch?.tool, "gemini_research_status");
-  assert.equal(pick.map.plan?.tool, "gemini_chat");
+  assert.equal(pick.map.analyze?.tool, "gemini_chat");
+  assert.equal(pick.map.caption?.tool, "gemini_chat");
   assert.equal(pick.map.verifyImage?.tool, "gemini_analyze_image");
   assert.equal(pick.map.generateImage?.tool, "gemini_generate_image");
   assert.deepEqual(pick.missing, []);
   ok("Gemini discovery picks the right tool for each operation and ignores decoys");
 
-  const forced = resolve("gemini", gServerTools as any, parseToolMap('{"plan":"does_not_exist"}'));
-  assert.deepEqual(forced.missing, ["plan"]);
+  const forced = resolve("gemini", gServerTools as any, parseToolMap('{"caption":"does_not_exist"}'));
+  assert.deepEqual(forced.missing, ["caption"]);
   assert.throws(() => parseToolMap("not json"));
   ok("tool override: an unknown forced name is reported as missing; bad JSON is rejected");
 
@@ -191,15 +195,22 @@ async function main() {
   assert.equal(p2.report, "# Coffee report\n\nFacts.");
   ok("Gemini research: start returns the chat id, poll goes running then done with the report");
 
-  const made = await gemini.plan({ topic: "coffee", report: "# Coffee report" });
+  const analysed = await gemini.analyze({ topic: "coffee", report: "# Coffee report" });
+  assert.equal(analysed.analysis, "Coffee angle for Instagram");
+  assert.equal(analysed.imagePrompt, "a cup of coffee");
+  const analysisCall = gFake.calls
+    .filter((c) => c.name === "gemini_chat")
+    .find((c) => String(c.args.prompt).includes('"analysis"'))!;
+  assert.ok(String(analysisCall.args.prompt).includes("Topic: coffee") && String(analysisCall.args.prompt).includes("# Coffee report"));
+  ok("Gemini analysis: prompt carries topic and report; fenced JSON reply parsed");
+
+  const made = await gemini.caption({ topic: "coffee", analysis: analysed.analysis });
   assert.equal(made.caption, "Coffee hook #coffee");
-  assert.equal(made.imagePrompt, "a cup of coffee");
-  const chatCall = gFake.calls.find((c) => c.name === "gemini_chat")!;
-  assert.ok(String(chatCall.args.prompt).includes("Topic: coffee") && String(chatCall.args.prompt).includes("# Coffee report"));
-  ok("Gemini plan: prompt carries topic and report; fenced JSON reply parsed into the plan");
+  assert.equal(made.commentBody, "Details");
+  ok("Gemini caption: hook with hashtags and the pinned comment text parsed from the reply");
 
   const image = Buffer.from("fake-jpeg-bytes");
-  const verdict = await gemini.verifyImage({ topic: "coffee", plan: made, image, mimeType: "image/jpeg", attempt: 1 });
+  const verdict = await gemini.verifyImage({ topic: "coffee", imagePrompt: analysed.imagePrompt, image, mimeType: "image/jpeg", attempt: 1 });
   assert.deepEqual(verdict, { pass: false, issues: ["text garbled"], revisedPrompt: "clean cup" });
   const analyzeCall = gFake.calls.find((c) => c.name === "gemini_analyze_image")!;
   assert.equal(analyzeCall.args.image_base64, image.toString("base64"));
@@ -219,7 +230,7 @@ async function main() {
 
   const health = await createGemini({ url: () => gFake.url, toolMap: () => undefined, cookie: cookieLoader }).health();
   assert.equal(health.ok, true);
-  assert.ok(String((health.details as any).mapping.plan).startsWith("gemini_chat"));
+  assert.ok(String((health.details as any).mapping.caption).startsWith("gemini_chat"));
   const partial = await startFakeMcp({ tools: geminiTools.filter((t) => t.name !== "gemini_analyze_image") });
   const partialHealth = await createGemini({ url: () => partial.url, toolMap: () => undefined, cookie: cookieLoader }).health();
   assert.equal(partialHealth.ok, false);

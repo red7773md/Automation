@@ -1,7 +1,17 @@
 export type Plan = {
-  caption: string; // short hook + hashtags, shown in the feed
+  caption: string; // short hook plus hashtags, shown in the feed
   commentBody: string; // detailed description, posted then pinned as the first comment
-  imagePrompt: string; // prompt for image generation
+  imagePrompt: string; // the prompt the image was made from
+};
+
+export type Analysis = {
+  analysis: string; // the angle and key points, written in a new Gemini chat
+  imagePrompt: string; // image prompt that suits the angle
+};
+
+export type Caption = {
+  caption: string; // short hook plus hashtags
+  commentBody: string; // detailed text for the pinned comment
 };
 
 export type Verdict = { pass: boolean; issues: string[]; revisedPrompt?: string };
@@ -26,10 +36,11 @@ export type Providers = {
     health(): Promise<Health>;
     startResearch(topic: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;
-    plan(args: { topic: string; report: string }): Promise<Plan>;
+    analyze(args: { topic: string; report: string }): Promise<Analysis>;
+    caption(args: { topic: string; analysis: string }): Promise<Caption>;
     verifyImage(args: {
       topic: string;
-      plan: Plan;
+      imagePrompt: string;
       image: Buffer;
       mimeType: string;
       attempt: number;

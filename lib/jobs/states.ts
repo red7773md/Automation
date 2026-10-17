@@ -4,9 +4,10 @@ import type { Plan, Verdict } from "@/lib/adapters/types";
 export const STATES = [
   "queued",
   "researching",
-  "planning",
+  "analyzing",
   "generating",
   "verifying",
+  "captioning",
   "awaiting_review",
   "publishing",
   "done",
@@ -15,27 +16,37 @@ export const STATES = [
 export type State = (typeof STATES)[number];
 
 export const STATE_LABEL: Record<State, string> = {
-  queued: "Queued",
+  queued: "Waiting to start",
   researching: "Deep research (Gemini)",
-  planning: "Plan & caption (Gemini)",
-  generating: "Image generation (ChatGPT)",
-  verifying: "Verification (Gemini)",
-  awaiting_review: "Waiting for your review",
+  analyzing: "Analysis in a new Gemini chat",
+  generating: "Image (Gemini)",
+  verifying: "Image check (Gemini)",
+  captioning: "Caption, hashtags and pinned comment (Gemini)",
+  awaiting_review: "Waiting for your approval",
   publishing: "Publishing (Instagram)",
   done: "Posted",
   failed: "Failed",
 };
 
 /** Steps the runner can advance without a human. */
-export const RUNNABLE: readonly State[] = ["queued", "researching", "planning", "generating", "verifying", "publishing"];
+export const RUNNABLE: readonly State[] = [
+  "queued",
+  "researching",
+  "analyzing",
+  "generating",
+  "verifying",
+  "captioning",
+  "publishing",
+];
 
 /** Timeline order shown in the UI. */
 export const TIMELINE: readonly State[] = [
   "queued",
   "researching",
-  "planning",
+  "analyzing",
   "generating",
   "verifying",
+  "captioning",
   "awaiting_review",
   "publishing",
   "done",
@@ -50,13 +61,16 @@ export type JobData = {
   researchRef?: string;
   researchStartedAt?: string;
   report?: string | null;
-  plan?: Plan;
+  analysis?: string; // Gemini's analysis of the report, written in a new chat
+  imagePrompt?: string; // image prompt suggested by the analysis
+  plan?: Plan; // caption with hashtags, pinned-comment text and the image prompt
   nextPrompt?: string | null;
   lastPrompt?: string;
   draftPath?: string;
   verdict?: Verdict | null;
   reviewFeedback?: string;
   approvedAt?: string;
+  autoPost?: boolean; // post without waiting for approval when the image check passes
   failedStep?: State;
   publish?: PublishProgress;
   publishedAt?: string;
@@ -70,6 +84,7 @@ export type JobRow = {
   attempts: number;
   data: JobData;
   error: string | null;
+  scheduled_at: string;
   created_at: string;
   updated_at: string;
 };

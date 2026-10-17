@@ -5,16 +5,16 @@
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
-import { PLAN_PROMPT, VERIFY_PROMPT, fill } from "./prompts";
-import type { Health, Plan, Providers, ResearchPoll, Verdict } from "./types";
+import { ANALYZE_PROMPT, CAPTION_PROMPT, VERIFY_PROMPT, fill } from "./prompts";
+import type { Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
 
-export type Op = "startResearch" | "pollResearch" | "plan" | "verifyImage" | "generateImage";
+export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
 export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string };
 export type OpPlan = { tool: string; keys: ArgKeys };
 export type Resolution = Partial<Record<Op, OpPlan>>;
 
 export const REQUIRED_OPS: Record<Provider, Op[]> = {
-  gemini: ["startResearch", "pollResearch", "plan", "verifyImage", "generateImage"],
+  gemini: ["startResearch", "pollResearch", "analyze", "caption", "verifyImage", "generateImage"],
   chatgpt: ["generateImage"],
 };
 
@@ -59,9 +59,10 @@ function score(op: Op, tool: McpTool, keys: ArgKeys): number {
     case "pollResearch":
       if (!keys.ref || !has(/research/, full)) return 0;
       return 5 + (has(/status|poll|check|result|progress|fetch|get/, name) ? 3 : 0) - (has(/start|create|begin|launch/, name) ? 6 : 0);
-    case "plan":
+    case "analyze":
+    case "caption":
       if (!keys.prompt || has(/image|picture|photo|draw|research|vision|analy/, full)) return 0;
-      return 5 + (has(/chat|ask|generate|send|prompt|message|text|plan/, full) ? 3 : 0);
+      return 5 + (has(/chat|ask|generate|send|prompt|message|text/, full) ? 3 : 0);
     case "verifyImage":
       if (!keys.image || !keys.prompt) return 0;
       return 5 + (has(/analy|vision|verify|check|describe|review|inspect|look|understand|image/, full) ? 3 : 0);
@@ -253,18 +254,24 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
         const res = await r.call(client, route, { ref }, cookie);
         return interpretPoll(res.text);
       }),
-    plan: ({ topic, report }) =>
-      r.run("plan", async (client, route, cookie): Promise<Plan> => {
-        const res = await r.call(client, route, { prompt: fill(PLAN_PROMPT, { topic, report }) }, cookie);
+    analyze: ({ topic, report }) =>
+      r.run("analyze", async (client, route, cookie): Promise<Analysis> => {
+        const res = await r.call(client, route, { prompt: fill(ANALYZE_PROMPT, { topic, report }) }, cookie);
         const d = extractJson(res.text);
-        return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? ""), imagePrompt: String(d.imagePrompt ?? "") };
+        return { analysis: String(d.analysis ?? ""), imagePrompt: String(d.imagePrompt ?? "") };
       }),
-    verifyImage: ({ topic, plan, image }) =>
+    caption: ({ topic, analysis }) =>
+      r.run("caption", async (client, route, cookie): Promise<Caption> => {
+        const res = await r.call(client, route, { prompt: fill(CAPTION_PROMPT, { topic, analysis }) }, cookie);
+        const d = extractJson(res.text);
+        return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? "") };
+      }),
+    verifyImage: ({ topic, imagePrompt, image }) =>
       r.run("verifyImage", async (client, route, cookie) => {
         const res = await r.call(
           client,
           route,
-          { prompt: fill(VERIFY_PROMPT, { topic, prompt: plan.imagePrompt }), image: image.toString("base64") },
+          { prompt: fill(VERIFY_PROMPT, { topic, prompt: imagePrompt }), image: image.toString("base64") },
           cookie,
         );
         return normalizeVerdict(extractJson(res.text));

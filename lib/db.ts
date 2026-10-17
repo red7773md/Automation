@@ -30,6 +30,8 @@ const DDL = [
      created_at timestamptz not null default now()
    )`,
   `create index if not exists job_logs_job_idx on job_logs (job_id, id)`,
+  `alter table jobs add column if not exists scheduled_at timestamptz not null default now()`,
+  `create index if not exists jobs_due_idx on jobs (state, scheduled_at)`,
   `create table if not exists provider_secrets (
      provider text primary key,
      ciphertext text not null,

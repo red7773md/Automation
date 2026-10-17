@@ -64,10 +64,13 @@ export const mockProviders: Providers = {
       if (Date.now() - started < 6_000) return { status: "running", progress: "mock source 3 of 7" };
       return { status: "done", report: "Mock research report: key facts, sources and angles for the topic." };
     },
-    plan: async ({ topic }) => ({
+    analyze: async ({ topic }) => ({
+      analysis: `Mock analysis of ${topic}: three points that matter most, and the angle for Instagram.`,
+      imagePrompt: `A clean, bright flat illustration representing ${topic}, square format, no text.`,
+    }),
+    caption: async ({ topic }) => ({
       caption: `Quick take on ${topic} 🧠 Save this for later.\n\n#mock #instagram #${topic.replace(/\W+/g, "").slice(0, 20)}`,
       commentBody: `Full breakdown of ${topic}:\n\n1) First key point\n2) Second key point\n3) Third key point\n\n(mock content)`,
-      imagePrompt: `A clean, bright flat illustration representing ${topic}, square format, no text.`,
     }),
     verifyImage: async ({ attempt }) =>
       attempt >= 2

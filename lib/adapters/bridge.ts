@@ -3,7 +3,7 @@
 // x-provider-cookie header on every call, so the bridge keeps no secrets.
 // Contract: see README.md, section "Bridge contract".
 import { LABEL, loadCookie, type Provider } from "@/lib/secrets";
-import type { Health, Plan, Providers, ResearchPoll, Verdict } from "./types";
+import type { Health, Providers, ResearchPoll, Verdict } from "./types";
 
 function bridgeUrl(provider: Provider, path: string): string {
   const envName = provider === "gemini" ? "GEMINI_BRIDGE_URL" : "CHATGPT_BRIDGE_URL";
@@ -58,11 +58,16 @@ export const gemini: Providers["gemini"] = {
   health: () => call<Health>("gemini", "GET", "/health", 20_000),
   startResearch: (topic) => call<{ ref: string }>("gemini", "POST", "/research/start", 30_000, { topic }),
   pollResearch: (ref) => call<ResearchPoll>("gemini", "POST", "/research/poll", 30_000, { ref }),
-  plan: ({ topic, report }) => call<Plan>("gemini", "POST", "/plan", 150_000, { topic, report }),
-  verifyImage: async ({ topic, plan, image, mimeType, attempt }) => {
+  analyze: async () => {
+    throw new Error("The Gemini HTTP bridge does not do analysis yet. Use GEMINI_MCP_URL.");
+  },
+  caption: async () => {
+    throw new Error("The Gemini HTTP bridge does not write captions yet. Use GEMINI_MCP_URL.");
+  },
+  verifyImage: async ({ topic, imagePrompt, image, mimeType, attempt }) => {
     const v = await call<Partial<Verdict>>("gemini", "POST", "/verify", 150_000, {
       topic,
-      plan,
+      imagePrompt,
       attempt,
       image: { mimeType, base64: image.toString("base64") },
     });
