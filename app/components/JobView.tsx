@@ -141,6 +141,7 @@ export default function JobView({ id }: { id: string }) {
             <h2 style={{ marginBottom: 4 }}>{j.topic}</h2>
             <span className="muted">
               Job {j.id.slice(0, 8)} · created {new Date(j.created_at).toLocaleString()}
+              {new Date(j.scheduled_at) > new Date() && <> · starts {new Date(j.scheduled_at).toLocaleString()}</>}
             </span>
           </div>
           <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
@@ -160,6 +161,11 @@ export default function JobView({ id }: { id: string }) {
               Generation {j.attempts} of {MAX_GENERATIONS}
               {j.busy ? " · a step is running…" : ""}
             </p>
+            {logs.length > 0 && (
+              <p className="muted">
+                Latest: {logs[logs.length - 1].message} · {new Date(logs[logs.length - 1].created_at).toLocaleTimeString()}
+              </p>
+            )}
             <label className="row">
               <input
                 type="checkbox"
@@ -167,7 +173,7 @@ export default function JobView({ id }: { id: string }) {
                 onChange={(e) => setAuto(e.target.checked)}
                 style={{ width: "auto" }}
               />
-              Run steps automatically while this page is open
+              Also run steps from this page
             </label>
             <div className="row">
               <button
