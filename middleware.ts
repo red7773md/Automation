@@ -14,5 +14,6 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|api/login|api/logout|api/media/|_next/static|_next/image|favicon.ico).*)"],
+  // api/cron/tick checks its own bearer secret, because the scheduled workflow has no login.
+  matcher: ["/((?!login|api/login|api/logout|api/media/|api/cron/tick|_next/static|_next/image|favicon.ico).*)"],
 };

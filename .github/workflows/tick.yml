@@ -1,0 +1,34 @@
+# Runs the next due step of every Insta Agent job, one step per call.
+# Needs two repository secrets: APP_URL (the deployed app, e.g. https://automation-xyz.vercel.app)
+# and CRON_SECRET (the same value as CRON_SECRET in the Vercel project).
+name: Insta Agent tick
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# Ticks never overlap: a second tick waits for the first to finish.
+concurrency:
+  group: insta-agent-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run the next due step
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "APP_URL and CRON_SECRET must be set as repository secrets" >&2
+            exit 1
+          fi
+          curl -sS --fail-with-body --max-time 290 -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL%/}/api/cron/tick"
+          echo

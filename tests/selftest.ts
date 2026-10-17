@@ -299,6 +299,25 @@ async function main() {
   ok("MCP client reads event-stream (SSE) replies as well as JSON");
 
   await gFake.close();
+
+  // ---------- background driver: auth and which jobs it may run ----------
+  const { cronAuthorized, NOT_TICKED } = await import("@/lib/jobs/tick");
+  const { RUNNABLE, STATES } = await import("@/lib/jobs/states");
+  const secret = randomBytes(24).toString("base64url");
+  assert.equal(cronAuthorized(`Bearer ${secret}`, secret), true);
+  assert.equal(cronAuthorized(`Bearer ${secret}x`, secret), false, "a longer token is refused");
+  assert.equal(cronAuthorized(`Bearer ${secret.slice(1)}`, secret), false, "a shorter token is refused");
+  assert.equal(cronAuthorized(secret, secret), false, "the bare secret without 'Bearer' is refused");
+  assert.equal(cronAuthorized(null, secret), false, "no header is refused");
+  assert.equal(cronAuthorized(`Bearer ${"a".repeat(24)}`, "short"), false, "a secret under 16 characters is never accepted");
+  assert.equal(cronAuthorized(`Bearer ${undefined}`, undefined), false, "an unset secret is never accepted");
+  ok("cron tick: exact bearer secret only; unset or short secrets are refused");
+
+  // The SQL in tickOnce lists the states it skips. They must be exactly the non-runnable ones.
+  const notRunnable = STATES.filter((s) => !RUNNABLE.includes(s)).sort();
+  assert.deepEqual([...NOT_TICKED].sort(), notRunnable);
+  ok("cron tick: skips exactly the states the runner will not run (awaiting_review, done, failed)");
+
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }
 
