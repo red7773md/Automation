@@ -17,17 +17,19 @@ jobs:
   tick:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      APP_URL: ${{ secrets.APP_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
+      # Until both secrets exist, the run ends here as a skip, not a failure, so it does not send an email every 5 minutes.
+      - name: Secrets not set yet
+        if: env.APP_URL == '' || env.CRON_SECRET == ''
+        run: echo "APP_URL and CRON_SECRET repository secrets are not set yet, so no step was run."
+
       - name: Run the next due step
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        if: env.APP_URL != '' && env.CRON_SECRET != ''
         run: |
           set -euo pipefail
-          if [ -z "${APP_URL}" ] || [ -z "${CRON_SECRET}" ]; then
-            echo "APP_URL and CRON_SECRET must be set as repository secrets" >&2
-            exit 1
-          fi
           curl -sS --fail-with-body --max-time 290 -X POST \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL%/}/api/cron/tick"
