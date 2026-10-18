@@ -197,9 +197,12 @@ function CookieCard({
 
 type ModelMap = Record<string, string>;
 type SettingsData = { models: ModelMap; presets: string[]; tasks: { id: string; label: string; hint: string }[] };
+type AccountModel = { name: string; displayName: string; available: boolean };
+type ModelOptions = { source: "account" | "library"; models: AccountModel[]; verifiedAt: string | null; message: string | null };
 
 function ModelsCard() {
   const [data, setData] = useState<SettingsData | null>(null);
+  const [options, setOptions] = useState<ModelOptions | null>(null);
   const [draft, setDraft] = useState<ModelMap>({});
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
@@ -211,6 +214,9 @@ function ModelsCard() {
         setDraft(d.models);
       })
       .catch((e) => setNote({ ok: false, text: e instanceof Error ? e.message : String(e) }));
+    api<ModelOptions>("GET", "/api/models")
+      .then(setOptions)
+      .catch(() => {});
   }, []);
 
   async function save(models: ModelMap) {
@@ -231,31 +237,34 @@ function ModelsCard() {
   if (!data) return <section className="card">{note ? <p className="error">{note.text}</p> : <span className="muted">Loading models…</span>}</section>;
 
   const changed = data.tasks.some((t) => (draft[t.id] ?? "") !== (data.models[t.id] ?? ""));
+  const choices: AccountModel[] = options?.models ?? data.presets.map((name) => ({ name, displayName: "", available: true }));
 
   return (
     <section className="card stack">
       <h2 style={{ margin: 0 }}>Gemini models per task</h2>
       <p className="muted" style={{ margin: 0 }}>
-        Leave a field empty to use the account default. Names are the library&apos;s model names, such as gemini-pro or gemini-flash.
-        Advanced and Plus models need an account that has them.
+        Pick a model for each task. &quot;Account default&quot; lets Gemini choose. The list is the models this Gemini account has, read at its last cookie check.
       </p>
-      <datalist id="model-presets">
-        {data.presets.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
+      {options?.source === "library" && <p className="banner">{options.message}</p>}
+      {options?.source === "account" && options.verifiedAt && (
+        <span className="muted">Account list read {new Date(options.verifiedAt).toLocaleString()}</span>
+      )}
       {data.tasks.map((t) => (
         <label key={t.id} className="stack" style={{ gap: 4 }}>
           <span>{t.label}</span>
           <span className="muted" style={{ fontSize: "0.85em" }}>{t.hint}</span>
-          <input
-            type="text"
-            list="model-presets"
-            placeholder="account default"
-            value={draft[t.id] ?? ""}
-            maxLength={64}
-            onChange={(e) => setDraft({ ...draft, [t.id]: e.target.value })}
-          />
+          <select value={draft[t.id] ?? ""} onChange={(e) => setDraft({ ...draft, [t.id]: e.target.value })}>
+            <option value="">Account default</option>
+            {choices.map((m) => (
+              <option key={m.name} value={m.name} disabled={!m.available}>
+                {m.displayName ? `${m.name} (${m.displayName})` : m.name}
+                {m.available ? "" : " · not on this account"}
+              </option>
+            ))}
+            {draft[t.id] && !choices.some((m) => m.name === draft[t.id]) && (
+              <option value={draft[t.id]}>{draft[t.id]} (saved)</option>
+            )}
+          </select>
         </label>
       ))}
       <div className="row">

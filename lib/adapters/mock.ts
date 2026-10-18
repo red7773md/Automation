@@ -58,6 +58,7 @@ export const mockProviders: Providers = {
   gemini: {
     health: async () => ({ ok: true, message: "MOCK mode: no request was sent to Gemini" }),
     session: async () => ({ ok: true, message: "MOCK mode: the session was not checked" }),
+    models: async () => ({ models: [], verifiedAt: null, message: "MOCK mode: no Gemini server was asked for its models." }),
     generateImage: async () => ({ bytes: makePng(512), mimeType: "image/png" }),
     startResearch: async () => ({ ref: `mock:${Date.now()}` }),
     pollResearch: async (ref) => {

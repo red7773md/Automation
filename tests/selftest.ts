@@ -266,6 +266,41 @@ async function main() {
   await partial.close();
   ok("health: full server reports the mapping; a server missing a tool says exactly which operation is unmapped");
 
+  // ---------- the account's models, from the Gemini server ----------
+  const { parseAccountModels } = await import("@/lib/adapters/ai-mcp");
+  const modelsFake = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_list_models",
+        description: "The Gemini models this account can use.",
+        inputSchema: { properties: {} },
+        handle: () => ({
+          text: JSON.stringify({
+            models: [
+              { name: "gemini-pro", display_name: "Pro", available: true },
+              { name: "gemini-flash-advanced", display_name: "Flash Advanced", available: false },
+            ],
+            verified: true,
+            verified_at: "2026-10-18T10:00:00Z",
+          }),
+        }),
+      },
+    ],
+  });
+  const listed = await createGemini({ url: () => modelsFake.url, toolMap: () => undefined, cookie: async () => null }).models();
+  assert.deepEqual(listed.models.map((m) => m.name), ["gemini-pro", "gemini-flash-advanced"]);
+  assert.equal(listed.models[1].available, false, "a model the account cannot use is listed but marked");
+  assert.equal(listed.verifiedAt, "2026-10-18T10:00:00Z");
+  await modelsFake.close();
+
+  const noList = await startFakeMcp({ tools: geminiTools });
+  const none = await createGemini({ url: () => noList.url, toolMap: () => undefined, cookie: async () => null }).models();
+  assert.equal(none.models.length, 0);
+  assert.match(none.message ?? "", /does not report its models/);
+  await noList.close();
+  assert.equal(parseAccountModels("not json").models.length, 0);
+  ok("models: the account's list comes from the server's own tool; a server without it says so, and nothing is guessed");
+
   // ---------- ChatGPT MCP: image as content block, and as a URL ----------
   const pngBytes = makePng(32);
   const chatFake = await startFakeMcp({

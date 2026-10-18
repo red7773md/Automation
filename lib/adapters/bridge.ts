@@ -57,6 +57,7 @@ export const gemini: Providers["gemini"] = {
   },
   health: () => call<Health>("gemini", "GET", "/health", 20_000),
   session: async () => ({ ok: false, message: "The Gemini HTTP bridge is not checked by this button yet. Use GEMINI_MCP_URL to check the login." }),
+  models: async () => ({ models: [], verifiedAt: null, message: "The Gemini HTTP bridge does not list models yet. Use GEMINI_MCP_URL." }),
   startResearch: (topic) => call<{ ref: string }>("gemini", "POST", "/research/start", 30_000, { topic }),
   pollResearch: (ref) => call<ResearchPoll>("gemini", "POST", "/research/poll", 30_000, { ref }),
   analyze: async () => {

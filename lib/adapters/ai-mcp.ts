@@ -6,7 +6,7 @@ import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
 import { ANALYZE_PROMPT, CAPTION_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
-import type { Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
+import type { AccountModel, AccountModels, Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
 
 export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
 export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string; model?: string; attachments?: string };
@@ -187,7 +187,43 @@ function makeRunner(provider: Provider, opts: McpOptions) {
     }
   }
 
-  return { run, call, health };
+  // The model list the Gemini server saved at its last cookie check. It is found by tool name, not as an
+  // operation, so a server without the tool just reports that no list is available.
+  async function accountModels(): Promise<AccountModels> {
+    const cookie = (await opts.cookie(provider)) ?? "";
+    const headers: Record<string, string> = cookie ? { "x-provider-cookie": cookie } : {};
+    return withMcp(endpoint(), headers, async (client) => {
+      const tools = await client.listTools();
+      const tool = tools.find((t) => t.name === "gemini_list_models") ?? tools.find((t) => /list[_-]?models/i.test(t.name));
+      if (!tool) {
+        return { models: [], verifiedAt: null, message: "This Gemini server does not report its models. Update the Gemini server." };
+      }
+      const res = await client.call(tool.name, {});
+      if (res.isError) throw new Error(`${tool.name} returned an error: ${res.text.slice(0, 300)}`);
+      return parseAccountModels(res.text);
+    });
+  }
+
+  return { run, call, health, accountModels };
+}
+
+/** Reads the reply of gemini_list_models: {"models": [{"name", "display_name", "available"}], "verified_at": "..."}. */
+export function parseAccountModels(text: string): AccountModels {
+  const data = parseJsonSafe(text);
+  const rec: Record<string, unknown> = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const models: AccountModel[] = [];
+  for (const item of Array.isArray(rec.models) ? rec.models : []) {
+    const m = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const name = String(m.name ?? "").trim();
+    if (name) models.push({ name, displayName: String(m.display_name ?? m.displayName ?? ""), available: m.available !== false });
+  }
+  const verifiedAt = typeof rec.verified_at === "string" ? rec.verified_at : null;
+  if (models.length) return { models, verifiedAt };
+  return {
+    models: [],
+    verifiedAt,
+    message: "The Gemini server has no model list yet. Check the Gemini cookies on its web page, then reload this page.",
+  };
 }
 
 /** Turns a research poll reply into running / done / failed. Works with JSON or plain text replies. */
@@ -245,6 +281,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
   const r = makeRunner("gemini", opts);
   return {
     health: r.health,
+    models: () => r.accountModels(),
     // A real question, so an expired Gemini cookie fails here, not in the middle of a job.
     session: () =>
       r.run("analyze", async (client, route, cookie): Promise<Health> => {

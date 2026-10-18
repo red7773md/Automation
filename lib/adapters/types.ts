@@ -31,11 +31,17 @@ export type ToolSummary = { name: string; args: string[]; required: string[] };
 /** How a provider is reached: an MCP server URL, an HTTP bridge, or not configured. */
 export type Transport = "mcp" | "bridge" | "none";
 
+/** A model the account can use. `available` is false for a model this account cannot use (for example an Advanced one). */
+export type AccountModel = { name: string; displayName: string; available: boolean };
+/** The account's models as the Gemini server last saw them. `message` says why there are none. */
+export type AccountModels = { models: AccountModel[]; verifiedAt: string | null; message?: string };
+
 export type Providers = {
   mode: "mock" | "live";
   gemini: {
     health(): Promise<Health>; // the server is reachable and its tools are matched
     session(): Promise<Health>; // one short question, so an expired cookie shows as a failure
+    models(): Promise<AccountModels>; // the models this account can use, from the Gemini server's last cookie check
     // model is optional: an empty value means the account's default model.
     startResearch(topic: string, model?: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;

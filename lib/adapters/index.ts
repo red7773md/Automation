@@ -24,6 +24,7 @@ const NOT_SET_CHATGPT = "Set CHATGPT_MCP_URL or CHATGPT_BRIDGE_URL in the Vercel
 const missingGemini: Providers["gemini"] = {
   health: async () => ({ ok: false, message: NOT_SET_GEMINI }),
   session: async () => ({ ok: false, message: NOT_SET_GEMINI }),
+  models: async () => ({ models: [], verifiedAt: null, message: NOT_SET_GEMINI }),
   startResearch: async () => { throw new Error(NOT_SET_GEMINI); },
   pollResearch: async () => { throw new Error(NOT_SET_GEMINI); },
   analyze: async () => { throw new Error(NOT_SET_GEMINI); },

@@ -105,7 +105,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .card h2.title::before { content: ""; }
 
 /* Form fields */
-input[type="text"], input[type="password"], input[type="datetime-local"], textarea {
+input[type="text"], input[type="password"], input[type="datetime-local"], select, textarea {
   width: 100%;
   font: inherit;
   padding: 10px 12px;
