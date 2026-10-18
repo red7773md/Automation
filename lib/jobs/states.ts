@@ -61,6 +61,7 @@ export type JobData = {
   researchRef?: string;
   researchStartedAt?: string;
   report?: string | null;
+  reportPath?: string; // the report saved as a Markdown file in Blob storage
   analysis?: string; // Gemini's analysis of the report, written in a new chat
   imagePrompt?: string; // image prompt suggested by the analysis
   plan?: Plan; // caption with hashtags, pinned-comment text and the image prompt

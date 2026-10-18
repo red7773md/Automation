@@ -196,6 +196,13 @@ export default function JobView({ id }: { id: string }) {
         {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
       </section>
 
+      {j.data.reportPath && (
+        <section className="card row" style={{ justifyContent: "space-between" }}>
+          <span className="muted">Research report, Markdown file</span>
+          <a href={`/api/jobs/${id}/report`}>Download .md</a>
+        </section>
+      )}
+
       {j.data.draftPath && (
         <section className="card grid2">
           <div className="stack">

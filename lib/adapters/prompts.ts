@@ -1,4 +1,11 @@
 // Prompts sent to Gemini through MCP. The HTTP bridge has its own copy in Python.
+
+/** File name the research report is sent under, so Gemini reads it as a Markdown document. */
+export const REPORT_FILE = "research-report.md";
+
+/** Put in the prompt in place of the report when the report is attached as a file. */
+export const REPORT_ATTACHED = `The full research report is attached as ${REPORT_FILE}. Read all of it before answering.`;
+
 export const ANALYZE_PROMPT = `You are preparing an Instagram post from a deep research report.
 Return ONLY a JSON object with exactly these two string keys:
 - "analysis": the key findings, what matters most to a general audience, and the angle that will work best on Instagram. Plain language, at most 1500 characters.

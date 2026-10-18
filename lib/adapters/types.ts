@@ -7,6 +7,7 @@ export type Plan = {
 export type Analysis = {
   analysis: string; // the angle and key points, written in a new Gemini chat
   imagePrompt: string; // image prompt that suits the angle
+  reportVia?: "attached" | "pasted"; // how the report reached Gemini, for the log
 };
 
 export type Caption = {

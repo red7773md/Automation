@@ -5,11 +5,13 @@
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
-import { ANALYZE_PROMPT, CAPTION_PROMPT, VERIFY_PROMPT, fill } from "./prompts";
+import { ANALYZE_PROMPT, CAPTION_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
 import type { Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
 
 export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
-export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string; model?: string };
+export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string; model?: string; attachments?: string };
+/** A text file sent with a question. The Gemini server writes it under this name. */
+export type Attachment = { name: string; content_base64: string };
 export type OpPlan = { tool: string; keys: ArgKeys };
 export type Resolution = Partial<Record<Op, OpPlan>>;
 
@@ -45,6 +47,7 @@ export function keysOf(tool: McpTool): ArgKeys {
     image: pick(noPaths, [/^(image|image_?base64|base64|image_?data|file|picture|media)$/i, /image|base64|file|picture|media/i]),
     cookie: pick(all, [/cookie/i]),
     model: pick(all, [/^model$/i, /model/i]),
+    attachments: pick(all, [/^(attachments|files)$/i]),
   };
 }
 
@@ -143,7 +146,7 @@ function makeRunner(provider: Provider, opts: McpOptions) {
   async function call(
     client: McpClient,
     route: OpPlan,
-    values: { prompt?: string; ref?: string; image?: string; model?: string },
+    values: { prompt?: string; ref?: string; image?: string; model?: string; attachments?: Attachment[] },
     cookie: string,
   ): Promise<McpCallResult> {
     const args: Record<string, unknown> = {};
@@ -152,6 +155,8 @@ function makeRunner(provider: Provider, opts: McpOptions) {
     if (route.keys.image && values.image !== undefined) args[route.keys.image] = values.image;
     // Only sent when the tool takes a model argument and a model is chosen. Otherwise the server's default applies.
     if (route.keys.model && values.model) args[route.keys.model] = values.model;
+    // Only sent when the tool takes attachments. Callers check route.keys.attachments before they build one.
+    if (route.keys.attachments && values.attachments?.length) args[route.keys.attachments] = values.attachments;
     if (route.keys.cookie && cookie) args[route.keys.cookie] = cookie;
     const result = await client.call(route.tool, args);
     if (result.isError) throw new Error(`${route.tool} returned an error: ${result.text.slice(0, 500)}`);
@@ -259,9 +264,24 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
       }),
     analyze: ({ topic, report, model }) =>
       r.run("analyze", async (client, route, cookie): Promise<Analysis> => {
-        const res = await r.call(client, route, { prompt: fill(ANALYZE_PROMPT, { topic, report }), model }, cookie);
+        // With a file-taking tool the report goes as a Markdown file, not inside the prompt.
+        const attached = Boolean(route.keys.attachments);
+        const res = await r.call(
+          client,
+          route,
+          {
+            prompt: fill(ANALYZE_PROMPT, { topic, report: attached ? REPORT_ATTACHED : report }),
+            model,
+            attachments: attached ? [{ name: REPORT_FILE, content_base64: Buffer.from(report, "utf8").toString("base64") }] : undefined,
+          },
+          cookie,
+        );
         const d = extractJson(res.text);
-        return { analysis: String(d.analysis ?? ""), imagePrompt: String(d.imagePrompt ?? "") };
+        return {
+          analysis: String(d.analysis ?? ""),
+          imagePrompt: String(d.imagePrompt ?? ""),
+          reportVia: attached ? "attached" : "pasted",
+        };
       }),
     caption: ({ topic, analysis, model }) =>
       r.run("caption", async (client, route, cookie): Promise<Caption> => {

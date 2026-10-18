@@ -4,7 +4,8 @@
 // check, the post goes out right after the caption step.
 import { providers } from "@/lib/adapters";
 import type { Plan } from "@/lib/adapters/types";
-import { draftPath, readDraft, saveDraft } from "@/lib/blob";
+import { draftPath, readDraft, reportPath, saveDraft } from "@/lib/blob";
+import { REPORT_FILE } from "@/lib/adapters/prompts";
 import { isSendable, shrinkForSending } from "@/lib/images";
 import { publicMediaUrl } from "@/lib/media";
 import { loadModels } from "@/lib/settings";
@@ -75,10 +76,12 @@ export async function runStep(job: JobRow): Promise<StepResult> {
       if (poll.status === "failed" || !poll.report) {
         throw new Error(`Deep research failed: ${poll.error ?? "no report returned"}`);
       }
+      // The report is kept as a Markdown file: it can be downloaded, and the analysis sends this file.
+      const file = await saveDraft(reportPath(job.id), Buffer.from(poll.report, "utf8"), "text/markdown; charset=utf-8");
       return {
         state: "analyzing",
-        data: { report: poll.report },
-        note: `Research complete (${poll.report.length.toLocaleString()} characters)`,
+        data: { report: poll.report, reportPath: file },
+        note: `Research complete (${poll.report.length.toLocaleString()} characters), saved as ${REPORT_FILE}`,
       };
     }
 
@@ -91,7 +94,11 @@ export async function runStep(job: JobRow): Promise<StepResult> {
       return {
         state: "generating",
         data: { analysis: a.analysis.trim(), imagePrompt: a.imagePrompt.trim(), report: null, nextPrompt: null },
-        note: `Analysis ready from a separate Gemini chat (${a.analysis.length.toLocaleString()} characters)`,
+        note: `Analysis ready from a separate Gemini chat (${a.analysis.length.toLocaleString()} characters). The report was ${
+          a.reportVia === "attached"
+            ? `attached as ${REPORT_FILE}`
+            : "pasted into the prompt, because the Gemini server does not take file attachments yet"
+        }`,
         detail: { imagePrompt: a.imagePrompt },
       };
     }

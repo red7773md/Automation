@@ -394,6 +394,39 @@ async function main() {
     await withoutArg.close();
   }
 
+  // ---------- report sent as a file ----------
+  const report = "# Coffee report\n\nFacts about coffee, long enough to matter.";
+  const takesFiles = (yes: boolean): FakeTool => ({
+    name: "gemini_ask",
+    description: "Ask Gemini a question",
+    inputSchema: { properties: yes ? { prompt: { type: "string" }, attachments: { type: "array" } } : { prompt: { type: "string" } } },
+    handle: () => ({ text: '{"analysis":"ok","imagePrompt":"img"}' }),
+  });
+  assert.equal(keysOf(takesFiles(true) as any).attachments, "attachments");
+  assert.equal(keysOf(takesFiles(false) as any).attachments, undefined);
+  const fileServer = await startFakeMcp({ tools: [takesFiles(true)] });
+  const pasteServer = await startFakeMcp({ tools: [takesFiles(false)] });
+  try {
+    const sends = createGemini({ url: () => fileServer.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null });
+    const attached = await sends.analyze({ topic: "coffee", report });
+    const sentFile = fileServer.calls.at(-1)!;
+    assert.equal(attached.reportVia, "attached");
+    assert.deepEqual(sentFile.args.attachments, [{ name: "research-report.md", content_base64: Buffer.from(report).toString("base64") }]);
+    assert.ok(String(sentFile.args.prompt).includes("attached as research-report.md"));
+    assert.ok(!String(sentFile.args.prompt).includes("Facts about coffee"), "the report is not pasted into the prompt");
+
+    const pastes = createGemini({ url: () => pasteServer.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null });
+    const pasted = await pastes.analyze({ topic: "coffee", report });
+    const sentPaste = pasteServer.calls.at(-1)!;
+    assert.equal(pasted.reportVia, "pasted");
+    assert.ok(String(sentPaste.args.prompt).includes("Facts about coffee"), "a server without attachments gets the report in the prompt");
+    assert.equal("attachments" in sentPaste.args, false);
+    ok("analysis: report sent as research-report.md when the tool takes files, pasted otherwise");
+  } finally {
+    await fileServer.close();
+    await pasteServer.close();
+  }
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.
