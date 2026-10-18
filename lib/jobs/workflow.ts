@@ -13,12 +13,12 @@ export type WorkflowKey = (typeof WORKFLOW_KEYS)[number];
 export type Workflow = Record<WorkflowKey, boolean>;
 
 export const WORKFLOW_LABEL: Record<WorkflowKey, string> = {
-  skipResearch: "Skip deep research (paste the report)",
-  skipAnalysis: "Skip analysis (write the image prompt yourself)",
-  skipImage: "Skip image generation (upload the image)",
-  skipVerify: "Skip the image check",
-  skipCaption: "Skip caption (write it yourself)",
-  skipApproval: "Skip my approval (post as soon as the caption is ready)",
+  skipResearch: "Deep research (paste the report yourself)",
+  skipAnalysis: "Analysis (write the image prompt yourself)",
+  skipImage: "Image generation (upload the picture yourself)",
+  skipVerify: "Image check",
+  skipCaption: "Caption and pinned comment (write them yourself)",
+  skipApproval: "Your approval (post as soon as the check passes)",
 };
 
 export const WORKFLOW_HINT: Record<WorkflowKey, string> = {
@@ -74,10 +74,10 @@ export function normalizeManual(input: unknown): ManualInputs {
 
 /** The text a switch needs. Returns the first problem, or null when the job can run. */
 export function missingManual(workflow: Workflow, manual: ManualInputs): string | null {
-  if (workflow.skipResearch && !manual.report) return "Paste the research report, or turn off Skip deep research.";
-  if (workflow.skipAnalysis && !manual.imagePrompt) return "Write the image prompt, or turn off Skip analysis.";
+  if (workflow.skipResearch && !manual.report) return "Paste the research report, or choose a different step to skip.";
+  if (workflow.skipAnalysis && !manual.imagePrompt) return "Write the image prompt, or choose a different step to skip.";
   if (workflow.skipCaption && (!manual.caption || !manual.commentBody)) {
-    return "Write the caption and the pinned comment text, or turn off Skip caption.";
+    return "Write the caption and the pinned comment text, or choose a different step to skip.";
   }
   return null;
 }

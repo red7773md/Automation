@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import SkipPicker from "@/app/components/SkipPicker";
 import { api } from "@/lib/client";
 import { STATE_LABEL, type State } from "@/lib/jobs/states";
 import { MANUAL_LIMITS, type ManualInputs, type ManualKey } from "@/lib/jobs/workflow";
@@ -176,25 +177,12 @@ export default function Dashboard() {
             <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
           </label>
           <div className="stack">
-            <span className="muted">Steps for this job. A switched-off step is skipped, and the job moves on to the next one.</span>
+            <span className="muted">Steps for this job. You can skip one; the job then moves on to the next step.</span>
             {!defaults ? (
               <span className="muted">{defaultsError ?? "Loading steps…"}</span>
             ) : (
               <>
-                {defaults.workflowSwitches.map((s) => (
-                  <label key={s.id} className="row" style={{ alignItems: "flex-start", gap: 10 }}>
-                    <input
-                      type="checkbox"
-                      checked={!!wf[s.id]}
-                      onChange={(e) => setWf({ ...wf, [s.id]: e.target.checked })}
-                      style={{ marginTop: 4 }}
-                    />
-                    <span className="stack" style={{ gap: 2 }}>
-                      <span>{s.label}</span>
-                      <span className="muted" style={{ fontSize: "0.85em" }}>{s.hint}</span>
-                    </span>
-                  </label>
-                ))}
+                <SkipPicker steps={defaults.workflowSwitches} value={wf} onChange={setWf} />
                 {defaults.workflowSwitches
                   .filter((s) => wf[s.id])
                   .flatMap((s) => TEXT_FOR[s.id] ?? [])

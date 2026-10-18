@@ -97,7 +97,7 @@ function ImageUpload({ jobId, onDone }: { jobId: string; onDone: () => void }) {
     <section className="card stack">
       <h2 style={{ margin: 0 }}>Upload the image</h2>
       <p className="muted" style={{ margin: 0 }}>
-        Image generation is switched off for this job, so the job waits here. Upload the picture to post. It is resized before the check.
+        Image generation is skipped for this job, so the job waits here. Upload the picture to post. It is resized before the check.
       </p>
       <input
         type="file"
@@ -262,7 +262,7 @@ export default function JobView({ id }: { id: string }) {
               {j.busy ? " · a step is running…" : ""}
             </p>
             {switchedOff.length > 0 && (
-              <p className="muted">Switched off for this job: {switchedOff.map((k) => WORKFLOW_LABEL[k]).join(" · ")}</p>
+              <p className="muted">Skipped for this job: {switchedOff.map((k) => WORKFLOW_LABEL[k]).join(" · ")}</p>
             )}
             {logs.length > 0 && (
               <p className="muted">

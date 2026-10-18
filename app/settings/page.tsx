@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import SkipPicker from "@/app/components/SkipPicker";
 import { api } from "@/lib/client";
 
 type Meta = { configured: boolean; updatedAt: string | null; cookieNames: string[] };
@@ -321,25 +322,12 @@ function WorkflowCard() {
     <section className="card stack">
       <h2 style={{ margin: 0 }}>Workflow defaults</h2>
       <p className="muted" style={{ margin: 0 }}>
-        A switch that is on skips its step, and the job moves to the next one. New jobs start with these settings, and the new job form can change them for a single job.
+        Choose the step to skip by default, or none. New jobs start with this choice, and the new job form can change it for a single job.
       </p>
       {draft.skipApproval && (
         <p className="banner">With Skip my approval on, a job posts to Instagram as soon as its check passes, without your review.</p>
       )}
-      {data.workflowSwitches.map((s) => (
-        <label key={s.id} className="row" style={{ alignItems: "flex-start", gap: 10 }}>
-          <input
-            type="checkbox"
-            checked={!!draft[s.id]}
-            onChange={(e) => setDraft({ ...draft, [s.id]: e.target.checked })}
-            style={{ marginTop: 4 }}
-          />
-          <span className="stack" style={{ gap: 2 }}>
-            <span>{s.label}</span>
-            <span className="muted" style={{ fontSize: "0.85em" }}>{s.hint}</span>
-          </span>
-        </label>
-      ))}
+      <SkipPicker steps={data.workflowSwitches} value={draft} onChange={setDraft} />
       <div className="row">
         <button className="primary" disabled={busy || !changed} onClick={save}>
           Save workflow
