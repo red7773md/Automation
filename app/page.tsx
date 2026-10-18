@@ -23,7 +23,20 @@ type Status = {
   chatgpt: { configured: boolean };
 };
 
+type Check = { ok: boolean; message: string };
+type HealthReport = { mode: "mock" | "live"; gemini: { tools: Check; session: Check }; instagram: Check };
+
 const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "ok", failed: "bad" };
+
+function CheckRow({ label, result }: { label: string; result: Check }) {
+  return (
+    <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+      <span>{label}</span>
+      <span className={`badge ${result.ok ? "ok" : "bad"}`}>{result.ok ? "Ready" : "Not ready"}</span>
+      <span className="muted" style={{ flex: "1 1 260px" }}>{result.message}</span>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const router = useRouter();
@@ -33,6 +46,21 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [startAt, setStartAt] = useState(""); // local date and time from the picker; empty means now
+  const [health, setHealth] = useState<HealthReport | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [healthError, setHealthError] = useState<string | null>(null);
+
+  async function checkServers() {
+    setChecking(true);
+    setHealthError(null);
+    try {
+      setHealth(await api<HealthReport>("POST", "/api/health"));
+    } catch (err) {
+      setHealthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChecking(false);
+    }
+  }
 
   const load = useCallback(
     () =>
@@ -107,6 +135,28 @@ export default function Dashboard() {
           </div>
           {error && <p className="error">{error}</p>}
         </form>
+      </section>
+
+      <section className="card stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Server check</h2>
+          <button disabled={checking} onClick={checkServers}>
+            {checking ? "Checking…" : "Check servers"}
+          </button>
+        </div>
+        <span className="muted">
+          Run this before you start a job. It checks that the Gemini and Instagram servers answer and that their logins still work.
+          The Gemini check sends one short question to Gemini.
+        </span>
+        {health && (
+          <div className="stack">
+            {health.mode === "mock" && <span className="muted">Mock mode: these results are fixed, no server was contacted.</span>}
+            <CheckRow label="Gemini server" result={health.gemini.tools} />
+            <CheckRow label="Gemini login" result={health.gemini.session} />
+            <CheckRow label="Instagram login" result={health.instagram} />
+          </div>
+        )}
+        {healthError && <p className="error">{healthError}</p>}
       </section>
 
       <section className="card">

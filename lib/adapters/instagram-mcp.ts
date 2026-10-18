@@ -13,6 +13,7 @@ const NAME = {
   post: "instagram_post_photo",
   comment: "instagram_comment_on_post",
   pin: "instagram_pin_comment",
+  login: "instagram_get_login_status",
 } as const;
 
 function endpoint(): string {
@@ -87,5 +88,18 @@ export const instagram: Providers["instagram"] = {
       throw new Error(`Instagram did not pin the comment: ${raw.slice(0, 400)}`);
     }
     return { raw };
+  },
+
+  async status() {
+    // The server replies with a Python dict: {'logged_in': True, 'username': 'name', 'user_id': '...'}.
+    const raw = await call(NAME.login, {});
+    if (field(raw, "logged_in") !== "True") {
+      return {
+        ok: false,
+        message: "Not logged in. The Instagram session has expired or was never set up. Log in again on the Instagram server.",
+      };
+    }
+    const username = field(raw, "username");
+    return { ok: true, message: `Logged in${username && username !== "None" ? ` as ${username}` : ""}`, username };
   },
 };

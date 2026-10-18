@@ -394,6 +394,57 @@ async function main() {
     await withoutArg.close();
   }
 
+  // ---------- server checks ----------
+  const chatReply = { text: "OK" };
+  const chatServer = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_ask",
+        description: "Ask Gemini a question",
+        inputSchema: { properties: { prompt: { type: "string" } } },
+        handle: () => ({ text: chatReply.text }),
+      },
+    ],
+  });
+  try {
+    const sessionClient = createGemini({ url: () => chatServer.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null });
+    assert.equal((await sessionClient.session()).ok, true, "a Gemini reply means the session works");
+    chatReply.text = "";
+    assert.equal((await sessionClient.session()).ok, false, "an empty reply is not ready");
+    ok("server checks: Gemini session is ready on a reply, not ready on an empty one");
+  } finally {
+    await chatServer.close();
+  }
+  const loginState = { loggedIn: true };
+  const loginServer = await startFakeMcp({
+    tools: [
+      {
+        name: "instagram_get_login_status",
+        inputSchema: { properties: {} },
+        handle: () => ({
+          text: loginState.loggedIn
+            ? "{'logged_in': True, 'username': 'alice', 'user_id': '1'}"
+            : "{'logged_in': False, 'username': None, 'user_id': None}",
+        }),
+      },
+    ],
+  });
+  const savedInstagramUrl = process.env.INSTAGRAM_MCP_URL;
+  try {
+    process.env.INSTAGRAM_MCP_URL = loginServer.url;
+    const valid = await instagram.status();
+    assert.equal(valid.ok, true);
+    assert.equal(valid.username, "alice");
+    loginState.loggedIn = false;
+    const expired = await instagram.status();
+    assert.equal(expired.ok, false);
+    assert.match(expired.message, /Not logged in/);
+    ok("server checks: a valid Instagram login reads as ready with the account; an expired one as not ready");
+  } finally {
+    process.env.INSTAGRAM_MCP_URL = savedInstagramUrl;
+    await loginServer.close();
+  }
+
   // ---------- report sent as a file ----------
   const report = "# Coffee report\n\nFacts about coffee, long enough to matter.";
   const takesFiles = (yes: boolean): FakeTool => ({

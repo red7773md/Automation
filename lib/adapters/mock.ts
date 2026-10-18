@@ -57,6 +57,7 @@ export const mockProviders: Providers = {
   mode: "mock",
   gemini: {
     health: async () => ({ ok: true, message: "MOCK mode: no request was sent to Gemini" }),
+    session: async () => ({ ok: true, message: "MOCK mode: the session was not checked" }),
     generateImage: async () => ({ bytes: makePng(512), mimeType: "image/png" }),
     startResearch: async () => ({ ref: `mock:${Date.now()}` }),
     pollResearch: async (ref) => {
@@ -94,5 +95,6 @@ export const mockProviders: Providers = {
     postPhoto: async () => ({ mediaId: `mock-media-${Date.now()}`, raw: "[mock] nothing was sent to Instagram" }),
     comment: async () => ({ commentId: `mock-comment-${Date.now()}`, raw: "[mock]" }),
     pin: async () => ({ raw: "[mock]" }),
+    status: async () => ({ ok: true, message: "MOCK mode: the Instagram login was not checked" }),
   },
 };

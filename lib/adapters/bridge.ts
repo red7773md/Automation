@@ -56,6 +56,7 @@ export const gemini: Providers["gemini"] = {
     throw new Error("The Gemini HTTP bridge does not generate images yet. Use GEMINI_MCP_URL for images.");
   },
   health: () => call<Health>("gemini", "GET", "/health", 20_000),
+  session: async () => ({ ok: false, message: "The Gemini HTTP bridge is not checked by this button yet. Use GEMINI_MCP_URL to check the login." }),
   startResearch: (topic) => call<{ ref: string }>("gemini", "POST", "/research/start", 30_000, { topic }),
   pollResearch: (ref) => call<ResearchPoll>("gemini", "POST", "/research/poll", 30_000, { ref }),
   analyze: async () => {

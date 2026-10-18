@@ -34,7 +34,8 @@ export type Transport = "mcp" | "bridge" | "none";
 export type Providers = {
   mode: "mock" | "live";
   gemini: {
-    health(): Promise<Health>;
+    health(): Promise<Health>; // the server is reachable and its tools are matched
+    session(): Promise<Health>; // one short question, so an expired cookie shows as a failure
     // model is optional: an empty value means the account's default model.
     startResearch(topic: string, model?: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;
@@ -59,5 +60,6 @@ export type Providers = {
     postPhoto(args: { imageUrl: string; caption: string }): Promise<{ mediaId: string; raw: string }>;
     comment(args: { mediaId: string; text: string }): Promise<{ commentId: string; raw: string }>;
     pin(args: { commentId: string; mediaId: string }): Promise<{ raw: string }>;
+    status(): Promise<Health & { username?: string }>; // is the Instagram login still valid
   };
 };

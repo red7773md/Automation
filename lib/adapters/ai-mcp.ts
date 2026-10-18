@@ -245,6 +245,14 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
   const r = makeRunner("gemini", opts);
   return {
     health: r.health,
+    // A real question, so an expired Gemini cookie fails here, not in the middle of a job.
+    session: () =>
+      r.run("analyze", async (client, route, cookie): Promise<Health> => {
+        const res = await r.call(client, route, { prompt: "Reply with the single word OK." }, cookie);
+        return res.text.trim()
+          ? { ok: true, message: "Gemini answered, so the session works." }
+          : { ok: false, message: "Gemini answered with no text. Check the Gemini server." };
+      }),
     startResearch: (topic, model) =>
       r.run("startResearch", async (client, route, cookie) => {
         const res = await r.call(client, route, { prompt: topic, model }, cookie);
