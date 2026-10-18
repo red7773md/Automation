@@ -234,7 +234,7 @@ export default function JobView({ id }: { id: string }) {
       <section className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
-            <h2 style={{ marginBottom: 4 }}>{j.topic}</h2>
+            <h2 className="title" style={{ marginBottom: 4 }}>{j.topic}</h2>
             <span className="muted">
               Job {j.id.slice(0, 8)} · created {new Date(j.created_at).toLocaleString()}
               {new Date(j.scheduled_at) > new Date() && <> · starts {new Date(j.scheduled_at).toLocaleString()}</>}
