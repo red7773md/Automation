@@ -61,6 +61,7 @@ export default function SettingsPage() {
         <CookieCard provider="chatgpt" label="ChatGPT" meta={status.chatgpt} transport={status.transports.chatgpt} onChange={load} />
       )}
       <ModelsCard />
+      <WorkflowCard />
       <InstagramCard configured={status.instagram.configured} />
     </>
   );
@@ -263,6 +264,76 @@ function ModelsCard() {
         </button>
         <button disabled={busy} onClick={() => save(Object.fromEntries(data.tasks.map((t) => [t.id, ""])))}>
           Use account default for all
+        </button>
+      </div>
+      {note && <p className={note.ok ? "muted" : "error"} style={{ margin: 0 }}>{note.text}</p>}
+    </section>
+  );
+}
+
+type WorkflowSwitch = { id: string; label: string; hint: string };
+type WorkflowData = { workflow: Record<string, boolean>; workflowSwitches: WorkflowSwitch[] };
+
+function WorkflowCard() {
+  const [data, setData] = useState<WorkflowData | null>(null);
+  const [draft, setDraft] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<Note | null>(null);
+
+  useEffect(() => {
+    api<WorkflowData>("GET", "/api/settings")
+      .then((d) => {
+        setData(d);
+        setDraft(d.workflow);
+      })
+      .catch((e) => setNote({ ok: false, text: e instanceof Error ? e.message : String(e) }));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await api<{ workflow: Record<string, boolean> }>("PUT", "/api/settings", { workflow: draft });
+      setDraft(r.workflow);
+      setData((prev) => (prev ? { ...prev, workflow: r.workflow } : prev));
+      setNote({ ok: true, text: "Workflow saved. New jobs start with these switches." });
+    } catch (err) {
+      setNote({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return <section className="card">{note ? <p className="error">{note.text}</p> : <span className="muted">Loading workflow…</span>}</section>;
+
+  const changed = data.workflowSwitches.some((s) => !!draft[s.id] !== !!data.workflow[s.id]);
+
+  return (
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>Workflow defaults</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        A switch that is on skips its step, and the job moves to the next one. New jobs start with these settings, and the new job form can change them for a single job.
+      </p>
+      {draft.skipApproval && (
+        <p className="banner">With Skip my approval on, a job posts to Instagram as soon as its check passes, without your review.</p>
+      )}
+      {data.workflowSwitches.map((s) => (
+        <label key={s.id} className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={!!draft[s.id]}
+            onChange={(e) => setDraft({ ...draft, [s.id]: e.target.checked })}
+            style={{ marginTop: 4 }}
+          />
+          <span className="stack" style={{ gap: 2 }}>
+            <span>{s.label}</span>
+            <span className="muted" style={{ fontSize: "0.85em" }}>{s.hint}</span>
+          </span>
+        </label>
+      ))}
+      <div className="row">
+        <button className="primary" disabled={busy || !changed} onClick={save}>
+          Save workflow
         </button>
       </div>
       {note && <p className={note.ok ? "muted" : "error"} style={{ margin: 0 }}>{note.text}</p>}
