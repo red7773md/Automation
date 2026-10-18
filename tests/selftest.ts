@@ -360,6 +360,40 @@ async function main() {
   assert.ok("at" in past, "a past time is accepted (it starts at once)");
   ok("job start times: empty means now, garbage and far-future times are refused");
 
+  // ---------- per-task models ----------
+  const { normalizeModels, defaultModels } = await import("@/lib/settings");
+  const { keysOf } = await import("@/lib/adapters/ai-mcp");
+  assert.deepEqual(normalizeModels({ research: "gemini-pro", caption: "" }), { ...defaultModels(), research: "gemini-pro" });
+  assert.deepEqual(normalizeModels({ unknown: "x" }), defaultModels(), "unknown keys are ignored");
+  assert.throws(() => normalizeModels({ image: "gemini pro; rm -rf" }), /not a valid model name/);
+  assert.throws(() => normalizeModels({ image: 5 }), /must be text/);
+  assert.throws(() => normalizeModels(null), /one entry per task/);
+  ok("models: names validated; blank means the account default; unknown keys ignored");
+
+  const modelTool = (takesModel: boolean): FakeTool => ({
+    name: "gemini_ask",
+    description: "Ask Gemini a question",
+    inputSchema: { properties: takesModel ? { prompt: { type: "string" }, model: { type: "string" } } : { prompt: { type: "string" } } },
+    handle: () => ({ text: '{"analysis":"ok","imagePrompt":"img"}' }),
+  });
+  const withArg = await startFakeMcp({ tools: [modelTool(true)] });
+  const withoutArg = await startFakeMcp({ tools: [modelTool(false)] });
+  try {
+    const pinned = createGemini({ url: () => withArg.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null });
+    await pinned.analyze({ topic: "t", report: "r", model: "gemini-flash" });
+    assert.equal(withArg.calls.at(-1)!.args.model, "gemini-flash", "the chosen model reaches a tool that takes one");
+    await pinned.analyze({ topic: "t", report: "r" });
+    assert.equal(withArg.calls.at(-1)!.args.model, undefined, "no model argument when none is chosen");
+    const plain = createGemini({ url: () => withoutArg.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null });
+    await plain.analyze({ topic: "t", report: "r", model: "gemini-flash" });
+    assert.equal("model" in withoutArg.calls.at(-1)!.args, false, "a tool without a model argument is never sent one");
+    assert.equal(keysOf(modelTool(true) as any).model, "model");
+    ok("models reach the server only when the tool takes a model argument");
+  } finally {
+    await withArg.close();
+    await withoutArg.close();
+  }
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

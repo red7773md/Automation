@@ -9,7 +9,7 @@ import { ANALYZE_PROMPT, CAPTION_PROMPT, VERIFY_PROMPT, fill } from "./prompts";
 import type { Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
 
 export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
-export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string };
+export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string; model?: string };
 export type OpPlan = { tool: string; keys: ArgKeys };
 export type Resolution = Partial<Record<Op, OpPlan>>;
 
@@ -44,6 +44,7 @@ export function keysOf(tool: McpTool): ArgKeys {
     ref: pick(all, [/^(ref|research_?id|chat_?id|conversation_?id|task_?id|cid|id)$/i, /research|chat|conversation|task|ref/i]),
     image: pick(noPaths, [/^(image|image_?base64|base64|image_?data|file|picture|media)$/i, /image|base64|file|picture|media/i]),
     cookie: pick(all, [/cookie/i]),
+    model: pick(all, [/^model$/i, /model/i]),
   };
 }
 
@@ -142,13 +143,15 @@ function makeRunner(provider: Provider, opts: McpOptions) {
   async function call(
     client: McpClient,
     route: OpPlan,
-    values: { prompt?: string; ref?: string; image?: string },
+    values: { prompt?: string; ref?: string; image?: string; model?: string },
     cookie: string,
   ): Promise<McpCallResult> {
     const args: Record<string, unknown> = {};
     if (route.keys.prompt && values.prompt !== undefined) args[route.keys.prompt] = values.prompt;
     if (route.keys.ref && values.ref !== undefined) args[route.keys.ref] = values.ref;
     if (route.keys.image && values.image !== undefined) args[route.keys.image] = values.image;
+    // Only sent when the tool takes a model argument and a model is chosen. Otherwise the server's default applies.
+    if (route.keys.model && values.model) args[route.keys.model] = values.model;
     if (route.keys.cookie && cookie) args[route.keys.cookie] = cookie;
     const result = await client.call(route.tool, args);
     if (result.isError) throw new Error(`${route.tool} returned an error: ${result.text.slice(0, 500)}`);
@@ -237,9 +240,9 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
   const r = makeRunner("gemini", opts);
   return {
     health: r.health,
-    startResearch: (topic) =>
+    startResearch: (topic, model) =>
       r.run("startResearch", async (client, route, cookie) => {
-        const res = await r.call(client, route, { prompt: topic }, cookie);
+        const res = await r.call(client, route, { prompt: topic, model }, cookie);
         const data = parseJsonSafe(res.text);
         const trimmed = res.text.trim();
         const ref =
@@ -254,31 +257,31 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
         const res = await r.call(client, route, { ref }, cookie);
         return interpretPoll(res.text);
       }),
-    analyze: ({ topic, report }) =>
+    analyze: ({ topic, report, model }) =>
       r.run("analyze", async (client, route, cookie): Promise<Analysis> => {
-        const res = await r.call(client, route, { prompt: fill(ANALYZE_PROMPT, { topic, report }) }, cookie);
+        const res = await r.call(client, route, { prompt: fill(ANALYZE_PROMPT, { topic, report }), model }, cookie);
         const d = extractJson(res.text);
         return { analysis: String(d.analysis ?? ""), imagePrompt: String(d.imagePrompt ?? "") };
       }),
-    caption: ({ topic, analysis }) =>
+    caption: ({ topic, analysis, model }) =>
       r.run("caption", async (client, route, cookie): Promise<Caption> => {
-        const res = await r.call(client, route, { prompt: fill(CAPTION_PROMPT, { topic, analysis }) }, cookie);
+        const res = await r.call(client, route, { prompt: fill(CAPTION_PROMPT, { topic, analysis }), model }, cookie);
         const d = extractJson(res.text);
         return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? "") };
       }),
-    verifyImage: ({ topic, imagePrompt, image }) =>
+    verifyImage: ({ topic, imagePrompt, image, model }) =>
       r.run("verifyImage", async (client, route, cookie) => {
         const res = await r.call(
           client,
           route,
-          { prompt: fill(VERIFY_PROMPT, { topic, prompt: imagePrompt }), image: image.toString("base64") },
+          { prompt: fill(VERIFY_PROMPT, { topic, prompt: imagePrompt }), image: image.toString("base64"), model },
           cookie,
         );
         return normalizeVerdict(extractJson(res.text));
       }),
-    generateImage: (prompt) =>
+    generateImage: (prompt, model) =>
       r.run("generateImage", async (client, route, cookie) => {
-        const res = await r.call(client, route, { prompt }, cookie);
+        const res = await r.call(client, route, { prompt, model }, cookie);
         return extractImage(res);
       }),
   };

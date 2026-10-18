@@ -34,18 +34,20 @@ export type Providers = {
   mode: "mock" | "live";
   gemini: {
     health(): Promise<Health>;
-    startResearch(topic: string): Promise<{ ref: string }>;
+    // model is optional: an empty value means the account's default model.
+    startResearch(topic: string, model?: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;
-    analyze(args: { topic: string; report: string }): Promise<Analysis>;
-    caption(args: { topic: string; analysis: string }): Promise<Caption>;
+    analyze(args: { topic: string; report: string; model?: string }): Promise<Analysis>;
+    caption(args: { topic: string; analysis: string; model?: string }): Promise<Caption>;
     verifyImage(args: {
       topic: string;
       imagePrompt: string;
       image: Buffer;
+      model?: string;
       mimeType: string;
       attempt: number;
     }): Promise<Verdict>;
-    generateImage(prompt: string): Promise<{ bytes: Buffer; mimeType: string }>;
+    generateImage(prompt: string, model?: string): Promise<{ bytes: Buffer; mimeType: string }>;
   };
   chatgpt: {
     health(): Promise<Health>;

@@ -7,6 +7,7 @@ import type { Plan } from "@/lib/adapters/types";
 import { draftPath, readDraft, saveDraft } from "@/lib/blob";
 import { isSendable, shrinkForSending } from "@/lib/images";
 import { publicMediaUrl } from "@/lib/media";
+import { loadModels } from "@/lib/settings";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
 
 const kb = (bytes: number) => (bytes / 1024).toFixed(0);
@@ -43,6 +44,7 @@ export function normalizePlan(p: Partial<Plan>): Plan {
 export async function runStep(job: JobRow): Promise<StepResult> {
   const p = providers();
   const d = job.data;
+  const models = await loadModels(); // read per step, so a change in Settings applies to the next step
 
   switch (job.state) {
     case "queued":
@@ -50,7 +52,7 @@ export async function runStep(job: JobRow): Promise<StepResult> {
 
     case "researching": {
       if (!d.researchRef) {
-        const { ref } = await p.gemini.startResearch(job.topic);
+        const { ref } = await p.gemini.startResearch(job.topic, models.research);
         return {
           state: "researching",
           data: { researchRef: ref, researchStartedAt: new Date().toISOString() },
@@ -82,7 +84,7 @@ export async function runStep(job: JobRow): Promise<StepResult> {
 
     case "analyzing": {
       if (!d.report) throw new Error("No research report stored. Retry from the research step.");
-      const a = await p.gemini.analyze({ topic: job.topic, report: d.report });
+      const a = await p.gemini.analyze({ topic: job.topic, report: d.report, model: models.analysis });
       if (!a.analysis.trim() || !a.imagePrompt.trim()) {
         throw new Error("The analysis came back without an analysis or an image prompt. Retry this step.");
       }
@@ -98,8 +100,10 @@ export async function runStep(job: JobRow): Promise<StepResult> {
       const attempt = job.attempts + 1;
       const prompt = d.nextPrompt || d.imagePrompt;
       if (!prompt) throw new Error("No image prompt stored. Retry from the analysis step.");
-      const source = process.env.IMAGE_PROVIDER === "chatgpt" ? p.chatgpt : p.gemini;
-      const image = await source.generateImage(prompt);
+      const image =
+        process.env.IMAGE_PROVIDER === "chatgpt"
+          ? await p.chatgpt.generateImage(prompt)
+          : await p.gemini.generateImage(prompt, models.image);
       const shrunk = await shrinkForSending(image.bytes);
       const path = await saveDraft(draftPath(job.id, attempt), shrunk.bytes, shrunk.contentType);
       return {
@@ -130,6 +134,7 @@ export async function runStep(job: JobRow): Promise<StepResult> {
         image: image.bytes,
         mimeType: image.contentType,
         attempt: job.attempts,
+        model: models.verify,
       });
       const issues = verdict.issues.length ? verdict.issues.join("; ") : "no issues listed";
 
@@ -155,7 +160,7 @@ export async function runStep(job: JobRow): Promise<StepResult> {
 
     case "captioning": {
       if (!d.analysis) throw new Error("No analysis stored. Retry from the analysis step.");
-      const c = await p.gemini.caption({ topic: job.topic, analysis: d.analysis });
+      const c = await p.gemini.caption({ topic: job.topic, analysis: d.analysis, model: models.caption });
       const plan = normalizePlan({ ...c, imagePrompt: d.imagePrompt });
       const post = d.autoPost === true && d.verdict?.pass === true;
       return {

@@ -60,6 +60,7 @@ export default function SettingsPage() {
       {status.imageProvider === "chatgpt" && (
         <CookieCard provider="chatgpt" label="ChatGPT" meta={status.chatgpt} transport={status.transports.chatgpt} onChange={load} />
       )}
+      <ModelsCard />
       <InstagramCard configured={status.instagram.configured} />
     </>
   );
@@ -189,6 +190,82 @@ function CookieCard({
           </span>
         </div>
       )}
+    </section>
+  );
+}
+
+type ModelMap = Record<string, string>;
+type SettingsData = { models: ModelMap; presets: string[]; tasks: { id: string; label: string; hint: string }[] };
+
+function ModelsCard() {
+  const [data, setData] = useState<SettingsData | null>(null);
+  const [draft, setDraft] = useState<ModelMap>({});
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<Note | null>(null);
+
+  useEffect(() => {
+    api<SettingsData>("GET", "/api/settings")
+      .then((d) => {
+        setData(d);
+        setDraft(d.models);
+      })
+      .catch((e) => setNote({ ok: false, text: e instanceof Error ? e.message : String(e) }));
+  }, []);
+
+  async function save(models: ModelMap) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await api<{ models: ModelMap }>("PUT", "/api/settings", { models });
+      setDraft(r.models);
+      setData((prev) => (prev ? { ...prev, models: r.models } : prev));
+      setNote({ ok: true, text: "Models saved. Each step uses them from its next run." });
+    } catch (err) {
+      setNote({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return <section className="card">{note ? <p className="error">{note.text}</p> : <span className="muted">Loading models…</span>}</section>;
+
+  const changed = data.tasks.some((t) => (draft[t.id] ?? "") !== (data.models[t.id] ?? ""));
+
+  return (
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>Gemini models per task</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        Leave a field empty to use the account default. Names are the library&apos;s model names, such as gemini-pro or gemini-flash.
+        Advanced and Plus models need an account that has them.
+      </p>
+      <datalist id="model-presets">
+        {data.presets.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      {data.tasks.map((t) => (
+        <label key={t.id} className="stack" style={{ gap: 4 }}>
+          <span>{t.label}</span>
+          <span className="muted" style={{ fontSize: "0.85em" }}>{t.hint}</span>
+          <input
+            type="text"
+            list="model-presets"
+            placeholder="account default"
+            value={draft[t.id] ?? ""}
+            maxLength={64}
+            onChange={(e) => setDraft({ ...draft, [t.id]: e.target.value })}
+          />
+        </label>
+      ))}
+      <div className="row">
+        <button className="primary" disabled={busy || !changed} onClick={() => save(draft)}>
+          Save models
+        </button>
+        <button disabled={busy} onClick={() => save(Object.fromEntries(data.tasks.map((t) => [t.id, ""])))}>
+          Use account default for all
+        </button>
+      </div>
+      {note && <p className={note.ok ? "muted" : "error"} style={{ margin: 0 }}>{note.text}</p>}
     </section>
   );
 }
