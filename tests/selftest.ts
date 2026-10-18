@@ -360,6 +360,33 @@ async function main() {
   assert.ok("at" in past, "a past time is accepted (it starts at once)");
   ok("job start times: empty means now, garbage and far-future times are refused");
 
+  // ---------- image size for the MCP servers ----------
+  // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
+  // or the Gemini MCP rejects the request with HTTP 413.
+  const { shrinkForSending, isSendable, SEND_LIMIT } = await import("@/lib/images");
+  const sharp = (await import("sharp")).default;
+  const side = 2048;
+  const raw = Buffer.alloc(side * side * 3);
+  const noise = randomBytes(raw.length);
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      const i = (y * side + x) * 3;
+      raw[i] = (x * 255) / side + (noise[i] & 7);
+      raw[i + 1] = (y * 255) / side + (noise[i + 1] & 7);
+      raw[i + 2] = ((x + y) * 127) / side + (noise[i + 2] & 7);
+    }
+  }
+  const big = await sharp(raw, { raw: { width: side, height: side, channels: 3 } }).png().toBuffer();
+  assert.ok(big.length > SEND_LIMIT, "the test image is larger than the send limit");
+  assert.equal(isSendable(big, "image/png"), false, "a large PNG is not sendable as it is");
+  const small = await shrinkForSending(big);
+  assert.equal(small.contentType, "image/jpeg");
+  assert.ok(small.bytes[0] === 0xff && small.bytes[1] === 0xd8, "the output is a JPEG");
+  assert.ok(small.bytes.length <= SEND_LIMIT, "the output fits the send limit");
+  assert.ok(Math.max(small.width, small.height) <= 1080, "the output is at most 1080 px on its longest side");
+  assert.equal(isSendable(small.bytes, small.contentType), true);
+  ok(`large PNG (${(big.length / 1024).toFixed(0)} KB) shrinks to ${(small.bytes.length / 1024).toFixed(0)} KB JPEG, ${small.width}x${small.height}`);
+
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }
 

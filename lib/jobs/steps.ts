@@ -5,8 +5,11 @@
 import { providers } from "@/lib/adapters";
 import type { Plan } from "@/lib/adapters/types";
 import { draftPath, readDraft, saveDraft } from "@/lib/blob";
+import { isSendable, shrinkForSending } from "@/lib/images";
 import { publicMediaUrl } from "@/lib/media";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
+
+const kb = (bytes: number) => (bytes / 1024).toFixed(0);
 
 export type StepResult = {
   state: State;
@@ -97,44 +100,55 @@ export async function runStep(job: JobRow): Promise<StepResult> {
       if (!prompt) throw new Error("No image prompt stored. Retry from the analysis step.");
       const source = process.env.IMAGE_PROVIDER === "chatgpt" ? p.chatgpt : p.gemini;
       const image = await source.generateImage(prompt);
-      const path = await saveDraft(draftPath(job.id, attempt), image.bytes, image.mimeType);
+      const shrunk = await shrinkForSending(image.bytes);
+      const path = await saveDraft(draftPath(job.id, attempt), shrunk.bytes, shrunk.contentType);
       return {
         state: "verifying",
         attempts: attempt,
         data: { draftPath: path, lastPrompt: prompt, nextPrompt: null },
-        note: `Image generated (attempt ${attempt} of ${MAX_GENERATIONS}, ${(image.bytes.length / 1024).toFixed(0)} KB), saved privately`,
+        note: `Image generated (attempt ${attempt} of ${MAX_GENERATIONS}): ${kb(image.bytes.length)} KB original, saved as ${kb(shrunk.bytes.length)} KB JPEG ${shrunk.width}×${shrunk.height}, privately`,
         detail: { prompt },
       };
     }
 
     case "verifying": {
       if (!d.draftPath) throw new Error("No image stored. Retry from the image step.");
-      const draft = await readDraft(d.draftPath);
+      const stored = await readDraft(d.draftPath);
+      // Drafts made before the resize step can be large PNGs. Shrink them now and
+      // save the small copy, so the check and the post both use the same file.
+      let image = stored;
+      let prefix = "";
+      if (!isSendable(stored.bytes, stored.contentType)) {
+        const shrunk = await shrinkForSending(stored.bytes);
+        await saveDraft(d.draftPath, shrunk.bytes, shrunk.contentType);
+        image = { bytes: shrunk.bytes, contentType: shrunk.contentType };
+        prefix = `Image resized from ${kb(stored.bytes.length)} KB to ${kb(shrunk.bytes.length)} KB before the check. `;
+      }
       const verdict = await p.gemini.verifyImage({
         topic: job.topic,
         imagePrompt: d.lastPrompt ?? d.imagePrompt ?? "",
-        image: draft.bytes,
-        mimeType: draft.contentType,
+        image: image.bytes,
+        mimeType: image.contentType,
         attempt: job.attempts,
       });
       const issues = verdict.issues.length ? verdict.issues.join("; ") : "no issues listed";
 
       if (verdict.pass) {
-        return { state: "captioning", data: { verdict }, note: "Image check passed.", detail: verdict };
+        return { state: "captioning", data: { verdict }, note: `${prefix}Image check passed.`, detail: verdict };
       }
       if (job.attempts < MAX_GENERATIONS) {
         const nextPrompt = verdict.revisedPrompt ?? `${d.imagePrompt ?? ""}\n\nFix these problems: ${issues}`;
         return {
           state: "generating",
           data: { verdict, nextPrompt },
-          note: `Image check failed (${issues}). Running the one allowed correction.`,
+          note: `${prefix}Image check failed (${issues}). Running the one allowed correction.`,
           detail: verdict,
         };
       }
       return {
         state: "captioning",
         data: { verdict },
-        note: `Image check failed again after ${job.attempts} attempts (${issues}). You decide at approval.`,
+        note: `${prefix}Image check failed again after ${job.attempts} attempts (${issues}). You decide at approval.`,
         detail: verdict,
       };
     }
