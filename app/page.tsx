@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "@/lib/client";
 import { STATE_LABEL, type State } from "@/lib/jobs/states";
+import { MANUAL_LIMITS, type ManualInputs, type ManualKey } from "@/lib/jobs/workflow";
 
 type JobSummary = {
   id: string;
@@ -28,6 +29,38 @@ type HealthReport = { mode: "mock" | "live"; gemini: { tools: Check; session: Ch
 
 const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "ok", failed: "bad" };
 
+type SwitchInfo = { id: string; label: string; hint: string };
+type SavedWorkflow = { workflow: Record<string, boolean>; workflowSwitches: SwitchInfo[] };
+type TextBox = { key: ManualKey; label: string; hint?: string; rows: number };
+
+// The text boxes each switch asks for. A box appears only while its switch is on.
+const TEXT_FOR: Partial<Record<string, TextBox[]>> = {
+  skipResearch: [
+    { key: "report", label: "Research report", hint: "Paste the whole report. It is sent to the analysis as a file.", rows: 10 },
+  ],
+  skipAnalysis: [
+    { key: "imagePrompt", label: "Image prompt", hint: "Describe the picture for the image generator.", rows: 4 },
+    { key: "analysis", label: "Analysis (optional)", hint: "Points for the caption. Leave empty to use the start of the report.", rows: 4 },
+  ],
+  skipCaption: [
+    { key: "caption", label: "Caption with hashtags", rows: 5 },
+    { key: "commentBody", label: "Pinned comment", hint: "The full details for the pinned comment.", rows: 5 },
+  ],
+};
+
+/** Only the text boxes of switches that are on are sent, so text left in a hidden box is not stored. */
+function manualForSwitches(wf: Record<string, boolean>, manual: ManualInputs): ManualInputs {
+  const out: ManualInputs = {};
+  for (const [id, boxes] of Object.entries(TEXT_FOR)) {
+    if (!wf[id]) continue;
+    for (const box of boxes ?? []) {
+      const text = manual[box.key]?.trim();
+      if (text) out[box.key] = text;
+    }
+  }
+  return out;
+}
+
 function CheckRow({ label, result }: { label: string; result: Check }) {
   return (
     <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -49,6 +82,10 @@ export default function Dashboard() {
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [checking, setChecking] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [defaults, setDefaults] = useState<SavedWorkflow | null>(null);
+  const [defaultsError, setDefaultsError] = useState<string | null>(null);
+  const [wf, setWf] = useState<Record<string, boolean>>({});
+  const [manual, setManual] = useState<ManualInputs>({});
 
   async function checkServers() {
     setChecking(true);
@@ -72,6 +109,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     api<Status>("GET", "/api/providers").then(setStatus).catch(() => {});
+    api<SavedWorkflow>("GET", "/api/settings")
+      .then((d) => {
+        setDefaults(d);
+        setWf(d.workflow);
+      })
+      .catch((e) => setDefaultsError(e instanceof Error ? e.message : String(e)));
     load();
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
@@ -82,7 +125,12 @@ export default function Dashboard() {
     setCreating(true);
     setError(null);
     try {
-      const body: { topic: string; scheduledAt?: string } = { topic };
+      const body: { topic: string; scheduledAt?: string; workflow?: Record<string, boolean>; manual?: ManualInputs } = { topic };
+      if (defaults) {
+        // Without the saved defaults loaded, the server applies them itself.
+        body.workflow = wf;
+        body.manual = manualForSwitches(wf, manual);
+      }
       if (startAt) {
         const when = new Date(startAt); // the picker is in this browser's local time
         if (Number.isNaN(when.getTime())) throw new Error("Choose a valid start time");
@@ -127,11 +175,51 @@ export default function Dashboard() {
             <span className="muted">Start at (optional, your local time). Leave empty to start now.</span>
             <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
           </label>
+          <div className="stack">
+            <span className="muted">Steps for this job. A switched-off step is skipped, and the job moves on to the next one.</span>
+            {!defaults ? (
+              <span className="muted">{defaultsError ?? "Loading steps…"}</span>
+            ) : (
+              <>
+                {defaults.workflowSwitches.map((s) => (
+                  <label key={s.id} className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!wf[s.id]}
+                      onChange={(e) => setWf({ ...wf, [s.id]: e.target.checked })}
+                      style={{ marginTop: 4 }}
+                    />
+                    <span className="stack" style={{ gap: 2 }}>
+                      <span>{s.label}</span>
+                      <span className="muted" style={{ fontSize: "0.85em" }}>{s.hint}</span>
+                    </span>
+                  </label>
+                ))}
+                {defaults.workflowSwitches
+                  .filter((s) => wf[s.id])
+                  .flatMap((s) => TEXT_FOR[s.id] ?? [])
+                  .map((box) => (
+                    <label key={box.key} className="stack" style={{ gap: 4 }}>
+                      <span>{box.label}</span>
+                      {box.hint && <span className="muted" style={{ fontSize: "0.85em" }}>{box.hint}</span>}
+                      <textarea
+                        rows={box.rows}
+                        maxLength={MANUAL_LIMITS[box.key]}
+                        value={manual[box.key] ?? ""}
+                        onChange={(e) => setManual({ ...manual, [box.key]: e.target.value })}
+                      />
+                    </label>
+                  ))}
+              </>
+            )}
+          </div>
           <div className="row">
             <button className="primary" disabled={creating || topic.trim().length < 3}>
               {creating ? "Starting…" : "Start job"}
             </button>
-            <span className="muted">Research, planning, image and checks run one step at a time. You approve before anything is posted.</span>
+            <span className="muted">
+              {wf.skipApproval ? "Posts as soon as its check passes, with no review from you." : "You approve before anything is posted."}
+            </span>
           </div>
           {error && <p className="error">{error}</p>}
         </form>
