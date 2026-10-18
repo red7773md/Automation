@@ -10,6 +10,7 @@ import {
   type JobRow,
   type State,
 } from "@/lib/jobs/states";
+import { WORKFLOW_KEYS, WORKFLOW_LABEL, type WorkflowKey } from "@/lib/jobs/workflow";
 
 type LogRow = {
   id: number;
@@ -24,6 +25,95 @@ type Detail = { job: JobRow; logs: LogRow[] };
 type Advance = { status: "progressed" | "pending" | "busy" | "idle" | "failed" | "scheduled"; state: State; error?: string };
 
 const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "ok", failed: "bad" };
+
+// The step each switch skips. Its place on the timeline is marked as skipped.
+const SKIP_STEP: Partial<Record<WorkflowKey, State>> = {
+  skipResearch: "researching",
+  skipAnalysis: "analyzing",
+  skipImage: "generating",
+  skipVerify: "verifying",
+  skipCaption: "captioning",
+  skipApproval: "awaiting_review",
+};
+
+// The job waits for a picture: image generation is switched off and nothing was uploaded yet.
+function waitsForUpload(j: JobRow): boolean {
+  return j.state === "generating" && j.data.workflow?.skipImage === true && !j.data.uploadedDraftPath;
+}
+
+const UPLOAD_MAX_SIDE = 1080; // the server resizes again; this keeps the upload small
+const UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Vercel refuses request bodies over about 4.5 MB
+
+async function resizeForUpload(file: File): Promise<Blob> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error("This picture could not be read. Try a JPEG or PNG.");
+  }
+  const scale = Math.min(1, UPLOAD_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("This browser cannot resize pictures.");
+  ctx.fillStyle = "#ffffff"; // a transparent PNG becomes white rather than black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  for (const quality of [0.9, 0.7, 0.5]) {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= UPLOAD_MAX_BYTES) return blob;
+  }
+  throw new Error("This picture is too large to send, even after resizing.");
+}
+
+function ImageUpload({ jobId, onDone }: { jobId: string; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function send(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const picture = await resizeForUpload(file);
+      const res = await fetch(`/api/jobs/${jobId}/image`, {
+        method: "POST",
+        headers: { "content-type": "image/jpeg" },
+        body: picture,
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Upload failed (HTTP ${res.status})`);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>Upload the image</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        Image generation is switched off for this job, so the job waits here. Upload the picture to post. It is resized before the check.
+      </p>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        disabled={busy}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void send(file);
+        }}
+      />
+      {busy && <span className="muted">Uploading…</span>}
+      {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
+    </section>
+  );
+}
 
 export default function JobView({ id }: { id: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -58,7 +148,7 @@ export default function JobView({ id }: { id: string }) {
         const d = await fetchDetail();
         if (stopped) return;
         setError(null);
-        if (auto && RUNNABLE.includes(d.job.state) && !d.job.busy) {
+        if (auto && RUNNABLE.includes(d.job.state) && !d.job.busy && !waitsForUpload(d.job)) {
           const r = await advance(false);
           if (stopped) return;
           later(r.status === "pending" ? 4000 : r.status === "busy" ? 2000 : r.status === "failed" ? 3000 : 300);
@@ -131,7 +221,13 @@ export default function JobView({ id }: { id: string }) {
     if (j.state === "failed") return i === stepIndex ? "failed" : i < stepIndex ? "done" : "";
     return i < stepIndex ? "done" : i === stepIndex ? "current" : "";
   };
-  const canRun = RUNNABLE.includes(j.state) && !j.busy && !working;
+  const canRun = RUNNABLE.includes(j.state) && !j.busy && !working && !waitsForUpload(j);
+  const switchedOff = WORKFLOW_KEYS.filter((k) => j.data.workflow?.[k]);
+  const skippedStates = new Set<State>(
+    switchedOff.map((k) => SKIP_STEP[k]).filter((s): s is State => s !== undefined),
+  );
+  // A switched-off step is marked on the timeline, except the step the job is on now.
+  const isSkipped = (s: State) => skippedStates.has(s) && TIMELINE.indexOf(s) !== stepIndex;
 
   return (
     <>
@@ -149,18 +245,25 @@ export default function JobView({ id }: { id: string }) {
 
         <div className="grid2" style={{ marginTop: 16 }}>
           <ol className="timeline">
-            {TIMELINE.map((s) => (
-              <li key={s} className={stepClass(s)}>
-                <span className="dot" />
-                {STATE_LABEL[s]}
-              </li>
-            ))}
+            {TIMELINE.map((s) => {
+              const skipped = isSkipped(s);
+              return (
+                <li key={s} className={skipped ? "skipped" : stepClass(s)} style={skipped ? { opacity: 0.5 } : undefined}>
+                  <span className="dot" />
+                  {STATE_LABEL[s]}
+                  {skipped && " · skipped"}
+                </li>
+              );
+            })}
           </ol>
           <div className="stack">
             <p className="muted">
               Generation {j.attempts} of {MAX_GENERATIONS}
               {j.busy ? " · a step is running…" : ""}
             </p>
+            {switchedOff.length > 0 && (
+              <p className="muted">Switched off for this job: {switchedOff.map((k) => WORKFLOW_LABEL[k]).join(" · ")}</p>
+            )}
             {logs.length > 0 && (
               <p className="muted">
                 Latest: {logs[logs.length - 1].message} · {new Date(logs[logs.length - 1].created_at).toLocaleTimeString()}
@@ -196,6 +299,8 @@ export default function JobView({ id }: { id: string }) {
         {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
       </section>
 
+      {waitsForUpload(j) && <ImageUpload jobId={id} onDone={() => fetchDetail().catch(() => {})} />}
+
       {j.data.reportPath && (
         <section className="card row" style={{ justifyContent: "space-between" }}>
           <span className="muted">Research report, Markdown file</span>
@@ -212,7 +317,9 @@ export default function JobView({ id }: { id: string }) {
           </div>
           <div className="stack">
             <h2>Verification</h2>
-            {j.data.verdict ? (
+            {j.data.verdict?.skipped ? (
+              <span className="badge" style={{ justifySelf: "start" }}>Skipped (switched off)</span>
+            ) : j.data.verdict ? (
               j.data.verdict.pass ? (
                 <span className="badge ok" style={{ justifySelf: "start" }}>Passed</span>
               ) : (
@@ -232,9 +339,11 @@ export default function JobView({ id }: { id: string }) {
             {j.state === "awaiting_review" && (
               <>
                 <p className="banner">
-                  {j.data.verdict && !j.data.verdict.pass
-                    ? "Verification failed twice. Decide whether to post this image or regenerate it."
-                    : "Verification passed. Approve to post."}
+                  {j.data.verdict?.skipped
+                    ? "The image check is switched off. Approve to post."
+                    : j.data.verdict && !j.data.verdict.pass
+                      ? "Verification failed twice. Decide whether to post this image or regenerate it."
+                      : "Verification passed. Approve to post."}
                 </p>
                 <div className="row">
                   <button
