@@ -1,6 +1,7 @@
 // Settings that the admin edits in the web UI and the pipeline reads on every step.
 // Stored as JSON rows in app_settings, so a change applies to the next step without a redeploy.
 import { getDb } from "./db";
+import { defaultWorkflow, normalizeWorkflow, type Workflow } from "./jobs/workflow";
 
 export const TASKS = ["research", "analysis", "caption", "image", "verify"] as const;
 export type Task = (typeof TASKS)[number];
@@ -65,6 +66,22 @@ export async function loadModels(): Promise<ModelSettings> {
   const rows = await sql`select value from app_settings where key = 'models'`;
   if (!rows[0]) return defaultModels();
   return normalizeModels(rows[0].value);
+}
+
+/** Defaults for new jobs. A job keeps the switches it was created with, so later changes do not reach it. */
+export async function loadWorkflow(): Promise<Workflow> {
+  const sql = await getDb();
+  const rows = await sql`select value from app_settings where key = 'workflow'`;
+  if (!rows[0]) return defaultWorkflow();
+  return normalizeWorkflow(rows[0].value);
+}
+
+export async function saveWorkflow(workflow: Workflow): Promise<void> {
+  const sql = await getDb();
+  await sql`
+    insert into app_settings (key, value, updated_at)
+    values ('workflow', ${JSON.stringify(workflow)}::jsonb, now())
+    on conflict (key) do update set value = excluded.value, updated_at = now()`;
 }
 
 export async function saveModels(models: ModelSettings): Promise<void> {

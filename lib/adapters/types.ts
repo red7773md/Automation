@@ -15,7 +15,7 @@ export type Caption = {
   commentBody: string; // detailed text for the pinned comment
 };
 
-export type Verdict = { pass: boolean; issues: string[]; revisedPrompt?: string };
+export type Verdict = { pass: boolean; issues: string[]; revisedPrompt?: string; skipped?: boolean };
 
 export type ResearchPoll = {
   status: "running" | "done" | "failed";

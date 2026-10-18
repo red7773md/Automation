@@ -30,6 +30,15 @@ export async function shrinkForSending(input: Buffer): Promise<Shrunk> {
   return { bytes: out.data, contentType: "image/jpeg", width: out.info.width, height: out.info.height };
 }
 
+/** The picture type from its first bytes: PNG, JPEG, WEBP or GIF. Null for anything else. */
+export function sniffImage(bytes: Buffer): string | null {
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (bytes.subarray(0, 6).toString("ascii") === "GIF87a" || bytes.subarray(0, 6).toString("ascii") === "GIF89a") return "image/gif";
+  return null;
+}
+
 export function isSendable(bytes: Buffer, contentType: string): boolean {
   return contentType === "image/jpeg" && bytes.length <= SEND_LIMIT;
 }

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { errorMessage, logEvent, redact } from "@/lib/logger";
+import { loadModels } from "@/lib/settings";
 import { RUNNABLE, type JobRow, type State } from "./states";
 import { runStep } from "./steps";
 
@@ -42,17 +43,20 @@ export async function advanceJob(id: string, opts: { force?: boolean } = {}): Pr
 
   const started = Date.now();
   try {
-    const res = await runStep(job);
+    // Models are read per step, so a change in Settings applies to the next step.
+    const res = await runStep(job, await loadModels());
     const attempts = res.attempts ?? job.attempts;
     await sql`
       update jobs set state = ${res.state}, attempts = ${attempts},
         data = data || ${JSON.stringify(res.data ?? {})}::jsonb,
         error = null, updated_at = now()
       where id = ${id}::uuid`;
-    await logEvent(id, job.state, res.note ?? `${job.state} → ${res.state}`, {
-      durationMs: Date.now() - started,
-      detail: res.detail,
-    });
+    if (!res.quiet) {
+      await logEvent(id, job.state, res.note ?? `${job.state} → ${res.state}`, {
+        durationMs: Date.now() - started,
+        detail: res.detail,
+      });
+    }
     return { status: res.pending ? "pending" : "progressed", state: res.state, note: res.note };
   } catch (err) {
     const message = errorMessage(err);

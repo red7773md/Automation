@@ -478,6 +478,84 @@ async function main() {
     await pasteServer.close();
   }
 
+  // ---------- workflow switches and typed-in content ----------
+  const { normalizeWorkflow, normalizeManual, missingManual, defaultWorkflow } = await import("@/lib/jobs/workflow");
+  const { runStep } = await import("@/lib/jobs/steps");
+  assert.deepEqual(normalizeWorkflow(undefined), defaultWorkflow(), "no switches means every step runs");
+  assert.equal(normalizeWorkflow({ skipVerify: true, nonsense: 1 }).skipVerify, true, "unknown keys are ignored");
+  assert.throws(() => normalizeWorkflow({ skipVerify: "yes" }), /must be true or false/, "a non-boolean switch is refused");
+  assert.deepEqual(normalizeManual({ report: "  hello  ", caption: "   " }), { report: "hello" });
+  assert.throws(() => normalizeManual({ caption: "x".repeat(2201) }), /longer than/);
+  assert.match(missingManual({ ...defaultWorkflow(), skipResearch: true }, {}) ?? "", /Paste the research report/);
+  assert.equal(missingManual({ ...defaultWorkflow(), skipResearch: true }, { report: "r" }), null);
+  ok("workflow: switches must be true or false; typed text is trimmed and length-checked; a skipped step needs its text");
+
+  const jobWith = (state: string, data: Record<string, unknown>, attempts = 1) =>
+    ({
+      id: "11111111-1111-4111-8111-111111111111",
+      topic: "coffee",
+      state,
+      busy: true,
+      attempts,
+      data,
+      error: null,
+      scheduled_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    }) as any;
+
+  const noVerify = await runStep(jobWith("verifying", { workflow: { ...defaultWorkflow(), skipVerify: true }, draftPath: "drafts/none/1" }));
+  assert.equal(noVerify.state, "captioning");
+  assert.equal((noVerify.data?.verdict as any).skipped, true);
+  ok("skip image check: goes straight to the caption, marked as skipped");
+
+  const noAnalysis = await runStep(
+    jobWith("analyzing", { workflow: { ...defaultWorkflow(), skipAnalysis: true }, report: "# Report body", manual: { imagePrompt: "a cup", analysis: "the angle" } }),
+  );
+  assert.equal(noAnalysis.state, "generating");
+  assert.equal(noAnalysis.data?.imagePrompt, "a cup");
+  assert.equal(noAnalysis.data?.analysis, "the angle");
+  ok("skip analysis: your image prompt and analysis text are used, with no Gemini chat");
+
+  const waiting = await runStep(jobWith("generating", { workflow: { ...defaultWorkflow(), skipImage: true }, imagePrompt: "a cup" }));
+  assert.equal(waiting.state, "generating");
+  assert.equal(waiting.pending, true);
+  assert.equal(waiting.quiet, true, "waiting for an upload is not logged on every poll");
+  const uploaded = await runStep(
+    jobWith("generating", { workflow: { ...defaultWorkflow(), skipImage: true }, uploadedDraftPath: "drafts/x/2", imagePrompt: "a cup" }, 1),
+  );
+  assert.equal(uploaded.state, "verifying");
+  assert.equal(uploaded.attempts, 2);
+  assert.equal(uploaded.data?.draftPath, "drafts/x/2");
+  ok("skip image: waits quietly for an upload, then goes on to the check with that picture");
+
+  const bothSkips = { ...defaultWorkflow(), skipCaption: true, skipApproval: true };
+  const posted = await runStep(
+    jobWith("captioning", {
+      workflow: bothSkips,
+      imagePrompt: "a cup",
+      verdict: { pass: true, issues: [], skipped: true },
+      manual: { caption: "Hook text #coffee", commentBody: "Full details here" },
+    }),
+  );
+  assert.equal(posted.state, "publishing");
+  assert.ok((posted.data?.plan as any).caption.startsWith("Hook text #coffee"));
+  assert.equal((posted.data?.plan as any).commentBody, "Full details here");
+  const held = await runStep(
+    jobWith("captioning", {
+      workflow: { ...defaultWorkflow(), skipCaption: true },
+      imagePrompt: "a cup",
+      manual: { caption: "Hook", commentBody: "Body" },
+      verdict: { pass: true, issues: [] },
+    }),
+  );
+  assert.equal(held.state, "awaiting_review", "without Skip approval the job waits for you");
+  const failedCheck = await runStep(
+    jobWith("captioning", { workflow: bothSkips, imagePrompt: "a cup", manual: { caption: "Hook", commentBody: "Body" }, verdict: { pass: false, issues: ["x"] } }),
+  );
+  assert.equal(failedCheck.state, "awaiting_review", "a failed check still stops for you, even with Skip approval");
+  ok("skip caption and skip approval: your caption posts at once; a failed check still stops for you");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

@@ -1,14 +1,16 @@
 // The pipeline. Each call performs exactly one step and returns the next state.
 // Order: research → analysis (a separate Gemini chat) → image → image check →
-// caption, hashtags and pinned comment → approval. With auto-post on and a passed
-// check, the post goes out right after the caption step.
+// caption, hashtags and pinned comment → approval. A switched-off step is skipped and
+// the job moves on: the text or image typed in by hand takes its place. With auto-post
+// on (or Skip approval) and a passed check, the post goes out right after the caption.
 import { providers } from "@/lib/adapters";
 import type { Plan } from "@/lib/adapters/types";
-import { draftPath, readDraft, reportPath, saveDraft } from "@/lib/blob";
 import { REPORT_FILE } from "@/lib/adapters/prompts";
+import { draftPath, readDraft, reportPath, saveDraft } from "@/lib/blob";
 import { isSendable, shrinkForSending } from "@/lib/images";
 import { publicMediaUrl } from "@/lib/media";
-import { loadModels } from "@/lib/settings";
+import { defaultModels, type ModelSettings } from "@/lib/settings";
+import { normalizeWorkflow, type Workflow } from "./workflow";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
 
 const kb = (bytes: number) => (bytes / 1024).toFixed(0);
@@ -19,12 +21,14 @@ export type StepResult = {
   attempts?: number;
   note?: string;
   detail?: unknown;
-  pending?: boolean; // external work still running; poll again later
+  pending?: boolean; // external work still running, or waiting for you; poll again later
+  quiet?: boolean; // a waiting step: do not write a log line on every poll
 };
 
 const RESEARCH_TIMEOUT_MIN = 45; // deep research normally takes 5 to 10 minutes
 const MAX_TEXT = 2200; // Instagram caption and comment limit
 const POINTER = "👇 Full details in the pinned comment";
+const ANALYSIS_EXCERPT = 1500; // used as the analysis when you skip analysis and write no analysis text
 
 export function normalizePlan(p: Partial<Plan>): Plan {
   const missing = (["caption", "commentBody", "imagePrompt"] as const).filter((k) => !p[k]?.trim());
@@ -42,14 +46,31 @@ export function normalizePlan(p: Partial<Plan>): Plan {
   };
 }
 
-export async function runStep(job: JobRow): Promise<StepResult> {
+/**
+ * Performs one step. `models` comes from Settings; the runner loads it, so tests can call
+ * this without a database. The job's own workflow switches (fixed when it was created) decide
+ * which steps are skipped.
+ */
+export async function runStep(job: JobRow, models: ModelSettings = defaultModels()): Promise<StepResult> {
   const p = providers();
   const d = job.data;
-  const models = await loadModels(); // read per step, so a change in Settings applies to the next step
+  const wf: Workflow = normalizeWorkflow(d.workflow);
+  const manual = d.manual ?? {};
 
   switch (job.state) {
-    case "queued":
+    case "queued": {
+      if (wf.skipResearch) {
+        const text = manual.report ?? "";
+        if (!text) throw new Error("No report was pasted. Add it on the job page, or turn off Skip deep research.");
+        const file = await saveDraft(reportPath(job.id), Buffer.from(text, "utf8"), "text/markdown; charset=utf-8");
+        return {
+          state: "analyzing",
+          data: { report: text, reportPath: file },
+          note: `Report supplied by you (${text.length.toLocaleString()} characters), saved as ${REPORT_FILE}. Research skipped.`,
+        };
+      }
       return { state: "researching", note: `Started (mode: ${p.mode})` };
+    }
 
     case "researching": {
       if (!d.researchRef) {
@@ -87,6 +108,16 @@ export async function runStep(job: JobRow): Promise<StepResult> {
 
     case "analyzing": {
       if (!d.report) throw new Error("No research report stored. Retry from the research step.");
+      if (wf.skipAnalysis) {
+        const imagePrompt = (manual.imagePrompt ?? "").trim();
+        if (!imagePrompt) throw new Error("No image prompt was written. Add it on the job page, or turn off Skip analysis.");
+        const analysis = (manual.analysis ?? d.report.slice(0, ANALYSIS_EXCERPT)).trim();
+        return {
+          state: "generating",
+          data: { analysis, imagePrompt, report: null, nextPrompt: null },
+          note: `Analysis skipped. Your image prompt is used, with ${manual.analysis ? "your analysis text" : "the start of the report as the analysis"}.`,
+        };
+      }
       const a = await p.gemini.analyze({ topic: job.topic, report: d.report, model: models.analysis });
       if (!a.analysis.trim() || !a.imagePrompt.trim()) {
         throw new Error("The analysis came back without an analysis or an image prompt. Retry this step.");
@@ -104,6 +135,19 @@ export async function runStep(job: JobRow): Promise<StepResult> {
     }
 
     case "generating": {
+      if (wf.skipImage) {
+        // Nothing to generate: wait until an image is uploaded on the job page. Each poll is quiet.
+        if (!d.uploadedDraftPath) {
+          return { state: "generating", pending: true, quiet: true, note: "Waiting for your image upload" };
+        }
+        const attempt = job.attempts + 1;
+        return {
+          state: "verifying",
+          attempts: attempt,
+          data: { draftPath: d.uploadedDraftPath, uploadedDraftPath: null, lastPrompt: "uploaded by you", nextPrompt: null },
+          note: `Image uploaded by you (attempt ${attempt}), used as the draft`,
+        };
+      }
       const attempt = job.attempts + 1;
       const prompt = d.nextPrompt || d.imagePrompt;
       if (!prompt) throw new Error("No image prompt stored. Retry from the analysis step.");
@@ -123,6 +167,13 @@ export async function runStep(job: JobRow): Promise<StepResult> {
     }
 
     case "verifying": {
+      if (wf.skipVerify) {
+        return {
+          state: "captioning",
+          data: { verdict: { pass: true, issues: [], skipped: true } },
+          note: "Image check skipped (your setting).",
+        };
+      }
       if (!d.draftPath) throw new Error("No image stored. Retry from the image step.");
       const stored = await readDraft(d.draftPath);
       // Drafts made before the resize step can be large PNGs. Shrink them now and
@@ -166,15 +217,21 @@ export async function runStep(job: JobRow): Promise<StepResult> {
     }
 
     case "captioning": {
-      if (!d.analysis) throw new Error("No analysis stored. Retry from the analysis step.");
-      const c = await p.gemini.caption({ topic: job.topic, analysis: d.analysis, model: models.caption });
-      const plan = normalizePlan({ ...c, imagePrompt: d.imagePrompt });
-      const post = d.autoPost === true && d.verdict?.pass === true;
+      let plan: Plan;
+      if (wf.skipCaption) {
+        plan = normalizePlan({ caption: manual.caption, commentBody: manual.commentBody, imagePrompt: d.imagePrompt ?? "" });
+      } else {
+        if (!d.analysis) throw new Error("No analysis stored. Retry from the analysis step.");
+        const c = await p.gemini.caption({ topic: job.topic, analysis: d.analysis, model: models.caption });
+        plan = normalizePlan({ ...c, imagePrompt: d.imagePrompt });
+      }
+      // A failed check twice still stops for you, even with approval skipped.
+      const post = (wf.skipApproval || d.autoPost === true) && d.verdict?.pass === true;
       return {
         state: post ? "publishing" : "awaiting_review",
         data: { plan },
-        note: `Caption ready (${plan.caption.length} characters with hashtags), pinned comment ${plan.commentBody.length} characters. ${
-          post ? "Auto-post is on, so posting now." : "Waiting for your approval."
+        note: `${wf.skipCaption ? "Caption written by you" : "Caption ready"} (${plan.caption.length} characters with hashtags), pinned comment ${plan.commentBody.length} characters. ${
+          post ? "Posting now without your approval." : "Waiting for your approval."
         }`,
       };
     }

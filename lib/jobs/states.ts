@@ -1,5 +1,6 @@
 // Pure constants and types. Imported by both server and browser code.
 import type { Plan, Verdict } from "@/lib/adapters/types";
+import type { ManualInputs, Workflow } from "./workflow";
 
 export const STATES = [
   "queued",
@@ -62,6 +63,9 @@ export type JobData = {
   researchStartedAt?: string;
   report?: string | null;
   reportPath?: string; // the report saved as a Markdown file in Blob storage
+  workflow?: Workflow; // the switches this job was created with
+  manual?: ManualInputs; // text typed in by hand for the switched-off steps
+  uploadedDraftPath?: string; // an image uploaded while the job waits for one (skip image generation)
   analysis?: string; // Gemini's analysis of the report, written in a new chat
   imagePrompt?: string; // image prompt suggested by the analysis
   plan?: Plan; // caption with hashtags, pinned-comment text and the image prompt
