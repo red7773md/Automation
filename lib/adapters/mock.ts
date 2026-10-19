@@ -70,6 +70,17 @@ export const mockProviders: Providers = {
       analysis: `Mock analysis of ${topic}: three points that matter most, and the angle for Instagram.`,
       imagePrompt: `A clean, bright flat illustration representing ${topic}, square format, no text.`,
     }),
+    // A carousel plan with exactly the number of slides asked for, so the slide count setting can be tried in mock mode.
+    analyzeCarousel: async ({ topic, slideCount }) => ({
+      analysis: `Mock carousel plan for ${topic}: the hook, the points, and a closing takeaway.`,
+      styleGuide: "Flat illustration, bright colours, plenty of empty space for text.",
+      slides: Array.from({ length: slideCount }, (_, i) => ({
+        role: i === 0 ? "hook" : i === slideCount - 1 ? "cta" : "point",
+        headline: i === 0 ? `Why ${topic} matters more than you think` : i === slideCount - 1 ? "Save this for later" : `Point ${i} about ${topic}`,
+        body: i === 0 ? "Three facts that change the picture" : "",
+        imagePrompt: `Slide ${i + 1}: a simple flat illustration about ${topic}, square format.`,
+      })),
+    }),
     caption: async ({ topic }) => ({
       caption: `Quick take on ${topic} 🧠 Save this for later.\n\n#mock #instagram #${topic.replace(/\W+/g, "").slice(0, 20)}`,
       commentBody: `Full breakdown of ${topic}:\n\n1) First key point\n2) Second key point\n3) Third key point\n\n(mock content)`,
@@ -92,8 +103,10 @@ export const mockProviders: Providers = {
       { name: "instagram_post_photo", args: ["image_url", "caption"], required: ["image_url"] },
       { name: "instagram_comment_on_post", args: ["media_id", "text"], required: ["media_id", "text"] },
       { name: "instagram_pin_comment", args: ["comment_id", "pin"], required: ["comment_id"] },
+      { name: "instagram_post_album", args: ["image_paths_or_urls", "caption"], required: ["image_paths_or_urls"] },
     ],
     postPhoto: async () => ({ mediaId: `mock-media-${Date.now()}`, raw: "[mock] nothing was sent to Instagram" }),
+    postAlbum: async ({ imageUrls }) => ({ mediaId: `mock-album-${Date.now()}`, raw: `[mock] ${imageUrls.length} pictures, nothing was sent to Instagram` }),
     comment: async () => ({ commentId: `mock-comment-${Date.now()}`, raw: "[mock]" }),
     pin: async () => ({ raw: "[mock]" }),
     status: async () => ({ ok: true, message: "MOCK mode: the Instagram login was not checked" }),

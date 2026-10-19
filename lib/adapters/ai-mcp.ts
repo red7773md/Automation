@@ -4,9 +4,10 @@
 // (JSON, operation -> tool name) overrides it when it picks the wrong tool.
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
+import { parseCarouselPlan } from "@/lib/jobs/carousel";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
-import { ANALYZE_PROMPT, CAPTION_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
-import type { AccountModel, AccountModels, Analysis, Caption, Health, Providers, ResearchPoll, Verdict } from "./types";
+import { ANALYZE_PROMPT, CAPTION_PROMPT, CAROUSEL_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
+import type { AccountModel, AccountModels, Analysis, Caption, CarouselPlan, Health, Providers, ResearchPoll, Verdict } from "./types";
 
 export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
 export type ArgKeys = { prompt?: string; ref?: string; image?: string; cookie?: string; model?: string; attachments?: string };
@@ -328,18 +329,40 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           reportVia: attached ? "attached" : "pasted",
         };
       }),
+    analyzeCarousel: ({ topic, report, slideCount, model }) =>
+      r.run("analyze", async (client, route, cookie): Promise<CarouselPlan> => {
+        // Same route as the single-post analysis: the report goes as a file when the tool takes one.
+        const attached = Boolean(route.keys.attachments);
+        const res = await r.call(
+          client,
+          route,
+          {
+            // report is filled last, so text inside the report is never mistaken for a placeholder.
+            prompt: fill(CAROUSEL_PROMPT, { topic, count: String(slideCount), report: attached ? REPORT_ATTACHED : report }),
+            model,
+            attachments: attached ? [{ name: REPORT_FILE, content_base64: Buffer.from(report, "utf8").toString("base64") }] : undefined,
+          },
+          cookie,
+        );
+        return parseCarouselPlan(res.text, slideCount);
+      }),
     caption: ({ topic, analysis, model }) =>
       r.run("caption", async (client, route, cookie): Promise<Caption> => {
         const res = await r.call(client, route, { prompt: fill(CAPTION_PROMPT, { topic, analysis }), model }, cookie);
         const d = extractJson(res.text);
         return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? "") };
       }),
-    verifyImage: ({ topic, imagePrompt, image, model }) =>
+    verifyImage: ({ topic, imagePrompt, image, model, expectedText }) =>
       r.run("verifyImage", async (client, route, cookie) => {
+        // A carousel slide with a headline must show it exactly. The check is added as item 6 only for those slides.
+        const extra = expectedText
+          ? `6. The image must show this text exactly as written: "${expectedText}". Fail the check if it is missing, misspelled or hard to read.`
+          : "";
         const res = await r.call(
           client,
           route,
-          { prompt: fill(VERIFY_PROMPT, { topic, prompt: imagePrompt }), image: image.toString("base64"), model },
+          // prompt is filled last, so text inside the prompt is never mistaken for a placeholder.
+          { prompt: fill(VERIFY_PROMPT, { topic, extra, prompt: imagePrompt }), image: image.toString("base64"), model },
           cookie,
         );
         return normalizeVerdict(extractJson(res.text));

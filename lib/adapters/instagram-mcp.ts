@@ -1,6 +1,6 @@
 // Instagram MCP. Tool and argument names come from red7773md/instagram-mcp-api
 // (instagram_mcp_server/mcp_server.py): instagram_post_photo, instagram_comment_on_post,
-// instagram_pin_comment.
+// instagram_pin_comment, instagram_post_album.
 //
 // That server does not answer with JSON. Post and comment return a Python dict as text
 // ("{'status': 'success', 'media_id': '179...', ...}"), and errors come back as ordinary
@@ -13,6 +13,7 @@ const NAME = {
   post: "instagram_post_photo",
   comment: "instagram_comment_on_post",
   pin: "instagram_pin_comment",
+  album: "instagram_post_album",
   login: "instagram_get_login_status",
 } as const;
 
@@ -68,6 +69,23 @@ export const instagram: Providers["instagram"] = {
       dry_run: false,
     });
     if (!isSuccess(raw)) throw new Error(`Instagram did not post the photo: ${raw.slice(0, 400)}`);
+    const mediaId = field(raw, "media_id");
+    if (!mediaId) throw new Error(`Instagram reported success but gave no media id: ${raw.slice(0, 300)}`);
+    return { mediaId, raw };
+  },
+
+  async postAlbum({ imageUrls, caption }) {
+    if (imageUrls.length < 2 || imageUrls.length > 10) {
+      throw new Error(`An Instagram carousel needs 2 to 10 pictures, not ${imageUrls.length}`);
+    }
+    // Same square frame as a single picture. The album tool takes no dry_run argument, so none is sent.
+    const raw = await call(NAME.album, {
+      caption,
+      image_paths_or_urls: imageUrls,
+      aspect: "square",
+      disable_comments: false,
+    });
+    if (!isSuccess(raw)) throw new Error(`Instagram did not post the carousel: ${raw.slice(0, 400)}`);
     const mediaId = field(raw, "media_id");
     if (!mediaId) throw new Error(`Instagram reported success but gave no media id: ${raw.slice(0, 300)}`);
     return { mediaId, raw };

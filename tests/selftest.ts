@@ -591,6 +591,159 @@ async function main() {
   assert.equal(failedCheck.state, "awaiting_review", "a failed check still stops for you, even with Skip approval");
   ok("skip caption and skip approval: your caption posts at once; a failed check still stops for you");
 
+  // ---------- carousel: slide count, plan, slide prompts, check ----------
+  const carousel = await import("@/lib/jobs/carousel");
+  assert.equal(carousel.CAROUSEL_DEFAULT, 8);
+  assert.deepEqual([carousel.CAROUSEL_MIN, carousel.CAROUSEL_MAX], [3, 10]);
+  assert.equal(carousel.clampSlideCount(8), 8);
+  assert.equal(carousel.clampSlideCount("7"), 7, "a number typed into a form arrives as text");
+  for (const bad of [2, 11, 2.5, "abc", "", null, undefined]) {
+    assert.throws(() => carousel.clampSlideCount(bad), /whole number from 3 to 10/, `refused: ${String(bad)}`);
+  }
+  ok("carousel slide count: whole numbers from 3 to 10 (default 8); anything else is refused");
+
+  const planText = [
+    "Here is the plan:",
+    "```json",
+    JSON.stringify({
+      analysis: "  Coffee helps focus.  ",
+      styleGuide: "Warm flat illustration.",
+      slides: [
+        { role: "point", headline: "Why coffee?", body: "A quick hook", imagePrompt: "a cup" },
+        { role: "hook", headline: "Second", body: "", imagePrompt: "b" },
+        { role: "weird", headline: "Third", body: "x", imagePrompt: "c" },
+        { role: "cta", headline: "Save it", body: "", imagePrompt: "d" },
+        { role: "point", headline: "Beyond the count", body: "", imagePrompt: "e" },
+      ],
+    }),
+    "```",
+  ].join("\n");
+  const cPlan = carousel.parseCarouselPlan(planText, 4);
+  assert.equal(cPlan.slides.length, 4, "keeps at most the number asked for");
+  assert.deepEqual(cPlan.slides.map((s) => s.role), ["hook", "point", "point", "cta"], "the first slide is the hook; a second hook becomes a point; an unknown role becomes a point");
+  assert.equal(cPlan.analysis, "Coffee helps focus.");
+  assert.equal(cPlan.styleGuide, "Warm flat illustration.");
+  assert.throws(() => carousel.parseCarouselPlan(JSON.stringify({ slides: [{ headline: "x" }, { imagePrompt: "y" }] }), 3), /no image prompt/);
+  assert.throws(() => carousel.parseCarouselPlan(JSON.stringify({ slides: [{ imagePrompt: "only one" }] }), 3), /at least 2/);
+  assert.throws(() => carousel.parseCarouselPlan("no json here", 3), /no JSON object/);
+  ok("carousel plan: JSON read from a fenced reply, cut to the slide count; the first slide is always the hook");
+
+  assert.deepEqual(
+    carousel.slidesFromLines("\n  a cup of coffee  \n\nsteam rising\n\n", 8).map((s) => [s.role, s.imagePrompt]),
+    [["hook", "a cup of coffee"], ["point", "steam rising"]],
+  );
+  assert.throws(() => carousel.slidesFromLines("only one", 8), /at least two lines/);
+  assert.throws(() => carousel.slidesFromLines("a\nb\nc", 2), /3 image prompts, but this carousel has 2 slides/);
+  ok("hand-written slides: one prompt per line, first line is the hook, blank lines ignored, too many refused");
+
+  const hook = { role: "hook" as const, headline: "Why coffee helps", body: "Three facts", imagePrompt: "a cup on a desk" };
+  const hookPrompt = carousel.slidePrompt("Flat illustration.", hook, { index: 0, total: 8 });
+  assert.ok(hookPrompt.includes("Swipe for more"), "the hook asks the viewer to swipe");
+  assert.ok(hookPrompt.includes('"Why coffee helps"') && hookPrompt.includes('"Three facts"'), "the headline and body are shown exactly");
+  assert.ok(hookPrompt.includes("Slide 1 of 8") && hookPrompt.includes("Flat illustration."), "the position and the shared style are given");
+  const point = carousel.slidePrompt("Flat illustration.", { role: "point", headline: "", body: "", imagePrompt: "steam" }, { index: 3, total: 8 }, ["text garbled."]);
+  assert.ok(!point.includes("Swipe for more"), "only the hook asks to swipe");
+  assert.ok(point.includes("Slide 4 of 8") && point.includes("Fix these problems: text garbled."), "a correction is added to the prompt");
+  assert.equal(carousel.expectedText(hook), "Why coffee helps");
+  assert.equal(carousel.expectedText(point), undefined, "a slide written by hand has no text to check");
+  ok("slide prompts: the hook says swipe and shows its text; corrections are added; hand-written slides have no text to check");
+
+  const img = (pass: boolean | undefined, issues?: string[]) => ({ attempt: 1, path: "drafts/x/1/1", tries: 1, pass, issues });
+  assert.deepEqual(carousel.carouselVerdict([img(true), img(true)], 2, false), { pass: true, issues: [] });
+  const mixed = carousel.carouselVerdict([img(true), img(false, ["text garbled"]), img(true)], 3, false);
+  assert.equal(mixed.pass, false);
+  assert.deepEqual(mixed.issues, ["Slide 2: text garbled"], "each issue names its slide");
+  const short = carousel.carouselVerdict([img(true)], 3, false);
+  assert.equal(short.pass, false, "a slide that was never made fails the set");
+  assert.deepEqual(short.issues, ["Slide 2: not made yet", "Slide 3: not made yet"]);
+  assert.deepEqual(carousel.carouselVerdict([img(false)], 1, false).issues, ["Slide 1: failed the check"]);
+  assert.deepEqual(carousel.carouselVerdict([], 3, true), { pass: true, issues: [], skipped: true });
+  ok("carousel check: passes only when every slide passes; each issue names its slide; a missing slide fails");
+
+  assert.match(carousel.carouselProblem("carousel", { ...defaultWorkflow(), skipImage: true }) ?? "", /cannot be skipped/);
+  assert.equal(carousel.carouselProblem("carousel", defaultWorkflow()), null);
+  assert.equal(carousel.carouselProblem("post", { ...defaultWorkflow(), skipImage: true }), null, "a single post can still take an uploaded picture");
+  ok("carousel: skipping image generation is refused; a single post may still skip it");
+
+  // Gemini: the plan request carries the chosen count and the report file; the reply is cut to that count.
+  const planReply = JSON.stringify({
+    analysis: "Coffee angle",
+    styleGuide: "Warm flat illustration.",
+    slides: Array.from({ length: 9 }, (_, i) => ({
+      role: i === 0 ? "hook" : i === 8 ? "cta" : "point",
+      headline: `Slide ${i + 1} headline`,
+      body: "",
+      imagePrompt: `picture ${i + 1}`,
+    })),
+  });
+  const askFake = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_ask",
+        description: "Ask Gemini a question",
+        inputSchema: { properties: { prompt: { type: "string" }, attachments: { type: "array" } } },
+        handle: () => ({ text: planReply }),
+      },
+      {
+        name: "gemini_analyze_image",
+        description: "Ask Gemini to look at an image and report problems",
+        inputSchema: { properties: { image_base64: { type: "string" }, prompt: { type: "string" } } },
+        handle: () => ({ text: JSON.stringify({ pass: true, issues: [] }) }),
+      },
+    ],
+  });
+  try {
+    const cg = createGemini({
+      url: () => askFake.url,
+      toolMap: () => '{"analyze":"gemini_ask","verifyImage":"gemini_analyze_image"}',
+      cookie: async () => null,
+    });
+    const cp = await cg.analyzeCarousel({ topic: "coffee", report: "# Coffee report\n\nFacts.", slideCount: 8 });
+    assert.equal(cp.slides.length, 8, "the plan is cut to the number of slides chosen");
+    assert.equal(cp.slides[0].role, "hook");
+    const sent = askFake.calls.at(-1)!;
+    assert.ok(String(sent.args.prompt).includes("Topic: coffee"));
+    assert.ok(String(sent.args.prompt).includes("at most 8"), "the prompt carries the chosen slide count");
+    assert.deepEqual(sent.args.attachments, [{ name: "research-report.md", content_base64: Buffer.from("# Coffee report\n\nFacts.").toString("base64") }]);
+    assert.equal((await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3 })).slides.length, 3);
+    ok("carousel analysis: the chosen count and the report file go to Gemini; the reply is cut to that count");
+
+    const withHeadline = await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1, expectedText: "Why coffee helps" });
+    assert.equal(withHeadline.pass, true);
+    assert.ok(String(askFake.calls.at(-1)!.args.prompt).includes('exactly as written: "Why coffee helps"'), "the headline is part of the check");
+    await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1 });
+    assert.equal(String(askFake.calls.at(-1)!.args.prompt).includes("exactly as written"), false, "no text check without a headline");
+    assert.equal(String(askFake.calls.at(-1)!.args.prompt).includes("{extra}"), false, "no placeholder is left in the prompt");
+    ok("carousel check: a slide's headline is checked as written; slides without one are not");
+  } finally {
+    await askFake.close();
+  }
+
+  // Instagram: the album goes out as one post with its pictures in order.
+  const albumFake = await startFakeMcp({
+    tools: [
+      {
+        name: "instagram_post_album",
+        inputSchema: { properties: { image_paths_or_urls: { type: "array" }, caption: { type: "string" }, aspect: { type: "string" }, disable_comments: { type: "boolean" } }, required: ["image_paths_or_urls", "caption"] },
+        handle: () => ({ text: "{'status': 'success', 'media_id': '17900000009', 'url': 'https://www.instagram.com/p/Car/', 'items': 2}" }),
+      },
+    ],
+  });
+  const savedAlbumUrl = process.env.INSTAGRAM_MCP_URL;
+  try {
+    process.env.INSTAGRAM_MCP_URL = albumFake.url;
+    const pics = ["https://app.example.com/a", "https://app.example.com/b"];
+    const album = await instagram.postAlbum({ imageUrls: pics, caption: "Swipe" });
+    assert.equal(album.mediaId, "17900000009");
+    assert.deepEqual(albumFake.calls.at(-1)!.args, { image_paths_or_urls: pics, caption: "Swipe", aspect: "square", disable_comments: false });
+    await assert.rejects(() => instagram.postAlbum({ imageUrls: [pics[0]], caption: "x" }), /2 to 10 pictures/);
+    await assert.rejects(() => instagram.postAlbum({ imageUrls: Array.from({ length: 11 }, (_, i) => `https://app.example.com/${i}`), caption: "x" }), /2 to 10 pictures/);
+    ok("Instagram carousel: the pictures go in order as one album; fewer than 2 or more than 10 is refused");
+  } finally {
+    process.env.INSTAGRAM_MCP_URL = savedAlbumUrl;
+    await albumFake.close();
+  }
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

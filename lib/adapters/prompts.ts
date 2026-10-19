@@ -30,6 +30,31 @@ Analysis:
 {analysis}
 `;
 
+export const CAROUSEL_PROMPT = `You are planning an Instagram carousel post from a deep research report. A carousel is a set of square images that the viewer swipes through, one after another.
+Return ONLY a JSON object with exactly these keys:
+- "analysis": the angle of the post and the key findings, in plain language, at most 1500 characters.
+- "styleGuide": one sentence describing the look shared by every slide (colours, style, lighting), at most 300 characters.
+- "slides": a list of at most {count} objects, in swipe order. Use {count} slides when the topic needs that many. Use fewer when it does not, but never fewer than 3. Each object has:
+  - "role": "hook" for the first slide, "cta" for the last slide, "point" for every other slide.
+  - "headline": the short text shown large on the picture, at most 60 characters.
+  - "body": one short line of supporting text, at most 120 characters. May be empty.
+  - "imagePrompt": a detailed prompt for an image generator that makes this slide's picture. Square composition. Describe only the picture. Do not write any text, letters or numbers in imagePrompt, because the headline and body are added as text. No real people's faces, logos or brand names.
+
+Rules for the slides:
+- The first slide is the hook. Open a curiosity gap: a surprising fact, or a question the viewer wants answered. Give the brief point in the headline or body, but do not give the whole answer, so the viewer swipes to learn more.
+- Each following slide makes one point, in order, and builds on the slide before it. Each headline makes sense when read alone.
+- The last slide is the call to action: a short takeaway and a reason to save or follow the account.
+- Every imagePrompt matches the styleGuide, so the set looks like one post.
+
+Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
+
+Topic: {topic}
+Number of slides: at most {count}
+
+Research report:
+{report}
+`;
+
 export const VERIFY_PROMPT = `You are checking an AI-generated image before it is posted to Instagram.
 Post topic: {topic}
 Image prompt that was used: {prompt}
@@ -40,7 +65,7 @@ Check the attached image for:
 3. No distorted faces, hands or extra limbs.
 4. No watermarks, logos or brand names.
 5. It looks clean and suitable for Instagram.
-
+{extra}
 Return ONLY a JSON object:
 {"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt that fixes the problems (only when pass is false, otherwise an empty string)"}
 Do not write anything outside the JSON.`;

@@ -15,6 +15,21 @@ export type Caption = {
   commentBody: string; // detailed text for the pinned comment
 };
 
+/** One slide of a carousel: where it sits in the swipe order, the text the picture shows, and the prompt that makes the picture. */
+export type Slide = {
+  role: "hook" | "point" | "cta"; // hook is the first slide, cta the last
+  headline: string; // large text on the picture; empty when the slide was written by hand
+  body: string; // a smaller line under the headline
+  imagePrompt: string;
+};
+
+/** What a carousel analysis returns: the angle, the look shared by every slide, and the slides in swipe order. */
+export type CarouselPlan = {
+  analysis: string;
+  styleGuide: string;
+  slides: Slide[];
+};
+
 export type Verdict = { pass: boolean; issues: string[]; revisedPrompt?: string; skipped?: boolean };
 
 export type ResearchPoll = {
@@ -46,6 +61,7 @@ export type Providers = {
     startResearch(topic: string, model?: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;
     analyze(args: { topic: string; report: string; model?: string }): Promise<Analysis>;
+    analyzeCarousel(args: { topic: string; report: string; slideCount: number; model?: string }): Promise<CarouselPlan>;
     caption(args: { topic: string; analysis: string; model?: string }): Promise<Caption>;
     verifyImage(args: {
       topic: string;
@@ -54,6 +70,7 @@ export type Providers = {
       model?: string;
       mimeType: string;
       attempt: number;
+      expectedText?: string; // the headline the picture must show, when the slide has one
     }): Promise<Verdict>;
     generateImage(prompt: string, model?: string): Promise<{ bytes: Buffer; mimeType: string }>;
   };
@@ -64,6 +81,7 @@ export type Providers = {
   instagram: {
     listTools(): Promise<ToolSummary[]>;
     postPhoto(args: { imageUrl: string; caption: string }): Promise<{ mediaId: string; raw: string }>;
+    postAlbum(args: { imageUrls: string[]; caption: string }): Promise<{ mediaId: string; raw: string }>; // 2 to 10 pictures, in order
     comment(args: { mediaId: string; text: string }): Promise<{ commentId: string; raw: string }>;
     pin(args: { commentId: string; mediaId: string }): Promise<{ raw: string }>;
     status(): Promise<Health & { username?: string }>; // is the Instagram login still valid

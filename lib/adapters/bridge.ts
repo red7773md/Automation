@@ -63,14 +63,18 @@ export const gemini: Providers["gemini"] = {
   analyze: async () => {
     throw new Error("The Gemini HTTP bridge does not do analysis yet. Use GEMINI_MCP_URL.");
   },
+  analyzeCarousel: async () => {
+    throw new Error("The Gemini HTTP bridge does not plan carousels yet. Use GEMINI_MCP_URL.");
+  },
   caption: async () => {
     throw new Error("The Gemini HTTP bridge does not write captions yet. Use GEMINI_MCP_URL.");
   },
-  verifyImage: async ({ topic, imagePrompt, image, mimeType, attempt }) => {
+  verifyImage: async ({ topic, imagePrompt, image, mimeType, attempt, expectedText }) => {
     const v = await call<Partial<Verdict>>("gemini", "POST", "/verify", 150_000, {
       topic,
       imagePrompt,
       attempt,
+      expectedText, // optional: a bridge that ignores it simply checks the picture without the headline
       image: { mimeType, base64: image.toString("base64") },
     });
     return {
