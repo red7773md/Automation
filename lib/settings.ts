@@ -2,6 +2,7 @@
 // Stored as JSON rows in app_settings, so a change applies to the next step without a redeploy.
 import { getDb } from "./db";
 import { defaultWorkflow, normalizeWorkflow, type Workflow } from "./jobs/workflow";
+import { CAROUSEL_DEFAULT, clampSlideCount } from "./jobs/carousel";
 
 export const TASKS = ["research", "analysis", "caption", "image", "verify"] as const;
 export type Task = (typeof TASKS)[number];
@@ -81,6 +82,35 @@ export async function saveWorkflow(workflow: Workflow): Promise<void> {
   await sql`
     insert into app_settings (key, value, updated_at)
     values ('workflow', ${JSON.stringify(workflow)}::jsonb, now())
+    on conflict (key) do update set value = excluded.value, updated_at = now()`;
+}
+
+/** How many slides a carousel gets by default. A post may give fewer when the topic needs fewer. */
+export type CarouselSettings = { slideCount: number };
+
+export function defaultCarousel(): CarouselSettings {
+  return { slideCount: CAROUSEL_DEFAULT };
+}
+
+/** Accepts a partial or full object. A count outside 3 to 10 is refused, not clamped, so the saved value is always the one shown. */
+export function normalizeCarousel(input: unknown): CarouselSettings {
+  if (!input || typeof input !== "object") throw new Error("Carousel settings must be an object");
+  const raw = (input as Record<string, unknown>).slideCount;
+  return { slideCount: raw === undefined || raw === null ? CAROUSEL_DEFAULT : clampSlideCount(raw) };
+}
+
+export async function loadCarousel(): Promise<CarouselSettings> {
+  const sql = await getDb();
+  const rows = await sql`select value from app_settings where key = 'carousel'`;
+  if (!rows[0]) return defaultCarousel();
+  return normalizeCarousel(rows[0].value);
+}
+
+export async function saveCarousel(carousel: CarouselSettings): Promise<void> {
+  const sql = await getDb();
+  await sql`
+    insert into app_settings (key, value, updated_at)
+    values ('carousel', ${JSON.stringify(carousel)}::jsonb, now())
     on conflict (key) do update set value = excluded.value, updated_at = now()`;
 }
 

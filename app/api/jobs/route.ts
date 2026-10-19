@@ -2,13 +2,15 @@ import { adminRoute, json } from "@/lib/api";
 import { getDb } from "@/lib/db";
 import { errorMessage, logEvent } from "@/lib/logger";
 import { parseStart } from "@/lib/jobs/schedule";
+import { carouselProblem, clampSlideCount, parseFormat, slidesFromLines } from "@/lib/jobs/carousel";
+import type { JobFormat } from "@/lib/jobs/states";
 import { activeSkips, missingManual, normalizeManual, normalizeWorkflow, type ManualInputs, type Workflow } from "@/lib/jobs/workflow";
-import { loadWorkflow } from "@/lib/settings";
+import { loadCarousel, loadWorkflow } from "@/lib/settings";
 
 export const GET = adminRoute(async () => {
   const sql = await getDb();
   const jobs = await sql`
-    select id, topic, state, busy, attempts, error, scheduled_at, created_at, updated_at
+    select id, topic, state, busy, attempts, error, scheduled_at, created_at, updated_at, data->>'format' as format
     from jobs order by created_at desc limit 50`;
   return json({ jobs });
 });
@@ -23,24 +25,42 @@ export const POST = adminRoute(async (req) => {
 
   let workflow: Workflow;
   let manual: ManualInputs;
+  let format: JobFormat;
+  let slideCount = 0; // set only for a carousel
   try {
     // Without a workflow in the request, the saved defaults apply.
     workflow = body?.workflow === undefined ? await loadWorkflow() : normalizeWorkflow(body.workflow);
     manual = normalizeManual(body?.manual);
+    format = parseFormat(body?.format);
+    if (format === "carousel") {
+      // Without a count in the request, the number saved in Settings applies.
+      slideCount = body?.slideCount === undefined ? (await loadCarousel()).slideCount : clampSlideCount(body.slideCount);
+    }
   } catch (err) {
     return json({ error: errorMessage(err) }, 400);
   }
-  const missing = missingManual(workflow, manual);
+  const problem = carouselProblem(format, workflow);
+  if (problem) return json({ error: problem }, 400);
+  const missing = missingManual(workflow, manual, format);
   if (missing) return json({ error: missing }, 400);
+  if (format === "carousel" && workflow.skipAnalysis) {
+    try {
+      slidesFromLines(manual.slides ?? "", slideCount); // checked now, so a bad list fails here and not mid-job
+    } catch (err) {
+      return json({ error: errorMessage(err) }, 400);
+    }
+  }
 
+  const data = format === "carousel" ? { workflow, manual, format, slideCount } : { workflow, manual, format };
   const sql = await getDb();
   const [row] = await sql`
     insert into jobs (topic, scheduled_at, data)
-    values (${topic}, coalesce(${start.at?.toISOString() ?? null}::timestamptz, now()), ${JSON.stringify({ workflow, manual })}::jsonb)
+    values (${topic}, coalesce(${start.at?.toISOString() ?? null}::timestamptz, now()), ${JSON.stringify(data)}::jsonb)
     returning id, scheduled_at`;
   const when = start.at && start.at.getTime() > Date.now() ? `, starts ${start.at.toISOString()}` : "";
   const skips = activeSkips(workflow);
   const switched = skips.length ? `. Switched off: ${skips.join(", ")}` : "";
-  await logEvent(row.id, "queued", `Job created: "${topic}"${when}${switched}`);
+  const kind = format === "carousel" ? `carousel, up to ${slideCount} slides` : "single post";
+  await logEvent(row.id, "queued", `Job created: "${topic}" (${kind})${when}${switched}`);
   return json({ id: row.id, scheduled_at: row.scheduled_at }, 201);
 });

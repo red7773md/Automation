@@ -1,8 +1,9 @@
 // One PRIVATE Vercel Blob store holds everything. Nothing is ever stored as public.
 import { get, put } from "@vercel/blob";
 
-export function draftPath(jobId: string, attempt: number): string {
-  return `drafts/${jobId}/${attempt}`;
+/** Where a picture is kept. A carousel keeps one picture per slide: drafts/{job}/{attempt}-{slide}. */
+export function draftPath(jobId: string, attempt: number, slide?: number): string {
+  return slide === undefined ? `drafts/${jobId}/${attempt}` : `drafts/${jobId}/${attempt}-${slide}`;
 }
 
 /** The research report, saved as Markdown. It is downloadable and is what the analysis chat reads. */

@@ -1,5 +1,5 @@
 import { UUID_RE } from "@/lib/api";
-import { openDraft } from "@/lib/blob";
+import { draftPath, openDraft } from "@/lib/blob";
 import { verifyMediaSignature } from "@/lib/media";
 
 type P = { jobId: string; attempt: string };
@@ -12,11 +12,20 @@ export async function GET(req: Request, { params }: { params: Promise<P> }) {
   const exp = Number(url.searchParams.get("exp"));
   const sig = url.searchParams.get("sig") ?? "";
 
-  if (!UUID_RE.test(jobId) || !/^\d{1,4}$/.test(attempt) || !verifyMediaSignature(jobId, Number(attempt), exp, sig)) {
+  // A carousel picture names its slide (0 to 9). A single post names none. Anything else is refused.
+  const slideParam = url.searchParams.get("slide");
+  const slide = slideParam === null ? undefined : /^\d$/.test(slideParam) ? Number(slideParam) : null;
+
+  if (
+    !UUID_RE.test(jobId) ||
+    !/^\d{1,4}$/.test(attempt) ||
+    slide === null ||
+    !verifyMediaSignature(jobId, Number(attempt), exp, sig, slide)
+  ) {
     return new Response("Forbidden", { status: 403 });
   }
   try {
-    const draft = await openDraft(`drafts/${jobId}/${attempt}`);
+    const draft = await openDraft(draftPath(jobId, Number(attempt), slide));
     return new Response(draft.stream, {
       headers: { "content-type": draft.contentType, "cache-control": "public, max-age=300" },
     });

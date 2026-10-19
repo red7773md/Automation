@@ -2,23 +2,13 @@
 // overall check. Pure functions with no I/O, so the rules can be tested and the browser can import the limits.
 import { extractJson } from "@/lib/adapters/parse";
 import type { CarouselPlan, Slide, Verdict } from "@/lib/adapters/types";
+import type { JobFormat, SlideImage } from "./states";
 import type { Workflow } from "./workflow";
 
 export const CAROUSEL_MIN = 3;
 export const CAROUSEL_MAX = 10; // Instagram allows at most 10 pictures in one carousel
 export const CAROUSEL_DEFAULT = 8;
 export const CAROUSEL_TRIES = 2; // a slide is made at most twice: the first try and one correction
-
-/** One slide's picture as stored on the job. `pass` is set once the slide has been checked. */
-export type SlideImage = {
-  attempt: number; // the job attempt the picture was made in; it is part of the stored path
-  path: string;
-  tries: number; // how many times this slide has been made
-  pass?: boolean;
-  issues?: string[];
-};
-
-export type JobFormat = "post" | "carousel";
 
 export function clampSlideCount(value: unknown): number {
   const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
@@ -105,6 +95,13 @@ export function carouselVerdict(images: SlideImage[], total: number, skipped: bo
     for (const reason of reasons) issues.push(`Slide ${i + 1}: ${reason}`);
   }
   return { pass: issues.length === 0, issues };
+}
+
+/** The format a request asks for. A missing format is a single post. */
+export function parseFormat(raw: unknown): JobFormat {
+  if (raw === undefined || raw === null || raw === "") return "post";
+  if (raw === "post" || raw === "carousel") return raw;
+  throw new Error('The format must be "post" or "carousel"');
 }
 
 /** A carousel makes one picture per slide, so there is nothing to upload in one go. Returns the problem, or null. */

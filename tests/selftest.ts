@@ -744,6 +744,110 @@ async function main() {
     await albumFake.close();
   }
 
+  // ---------- carousel: formats, saved count, storage, links, steps ----------
+  assert.equal(carousel.parseFormat(undefined), "post", "no format means a single post");
+  assert.equal(carousel.parseFormat("carousel"), "carousel");
+  assert.throws(() => carousel.parseFormat("reel"), /must be "post" or "carousel"/);
+  const { normalizeCarousel, defaultCarousel } = await import("@/lib/settings");
+  assert.deepEqual(defaultCarousel(), { slideCount: 8 });
+  assert.deepEqual(normalizeCarousel({}), { slideCount: 8 });
+  assert.deepEqual(normalizeCarousel({ slideCount: "5" }), { slideCount: 5 });
+  assert.throws(() => normalizeCarousel({ slideCount: 12 }), /whole number from 3 to 10/);
+  ok("carousel formats and the saved count: missing means a post and 8 slides; out of range is refused");
+
+  const { draftPath } = await import("@/lib/blob");
+  assert.equal(draftPath("job", 4), "drafts/job/4", "a single post keeps its path");
+  assert.equal(draftPath("job", 4, 2), "drafts/job/4-2", "each carousel slide has its own picture");
+  const slideUrl = new URL(publicMediaUrl(jobId, 4, 2));
+  assert.equal(slideUrl.searchParams.get("slide"), "2");
+  const slideExp = Number(slideUrl.searchParams.get("exp"));
+  const slideSig = slideUrl.searchParams.get("sig")!;
+  assert.equal(verifyMediaSignature(jobId, 4, slideExp, slideSig, 2), true);
+  assert.equal(verifyMediaSignature(jobId, 4, slideExp, slideSig, 3), false, "a slide's link does not open another slide");
+  assert.equal(verifyMediaSignature(jobId, 4, slideExp, slideSig), false, "a slide's link does not open the single-post picture");
+  ok("storage and links: each slide has its own path and signed link; no link opens another slide");
+
+  assert.match(missingManual({ ...defaultWorkflow(), skipAnalysis: true }, {}, "carousel") ?? "", /one image prompt per line/);
+  assert.equal(missingManual({ ...defaultWorkflow(), skipAnalysis: true }, { slides: "a\nb" }, "carousel"), null);
+  assert.match(missingManual({ ...defaultWorkflow(), skipAnalysis: true }, {}) ?? "", /Write the image prompt/);
+  ok("hand-written carousel: its slides are asked for, not a single image prompt");
+
+  const { afterCheck } = await import("@/lib/jobs/carousel-steps");
+  const pic = (tries: number, pass?: boolean, issues: string[] = []) => ({ attempt: 1, path: "p", tries, pass, issues });
+  const wfAll = defaultWorkflow();
+  const failing = { pass: false, issues: ["text garbled"], revisedPrompt: "a clean cup" };
+  const retry = afterCheck(1, 3, pic(1, false, ["text garbled"]), failing, [pic(1, true), pic(1, false, ["text garbled"])], wfAll);
+  assert.equal(retry.state, "generating", "a first failure makes the same slide again");
+  assert.equal(retry.data?.slideIndex, 1);
+  assert.deepEqual(retry.data?.slideFix, { index: 1, notes: ["text garbled"], imagePrompt: "a clean cup" });
+  const moved = afterCheck(1, 3, pic(2, false, ["text garbled"]), failing, [pic(1, true), pic(2, false, ["text garbled"])], wfAll);
+  assert.equal(moved.state, "generating");
+  assert.equal(moved.data?.slideIndex, 2, "after a second failure the job moves on to the next slide");
+  assert.equal(moved.data?.slideFix, null);
+  const lastFail = afterCheck(2, 3, pic(2, false, ["text garbled"]), failing, [pic(1, true), pic(1, true), pic(2, false, ["text garbled"])], wfAll);
+  assert.equal(lastFail.state, "captioning", "after the last slide the caption comes next, even when a slide failed");
+  assert.equal((lastFail.data?.verdict as any).pass, false);
+  assert.deepEqual((lastFail.data?.verdict as any).issues, ["Slide 3: text garbled"]);
+  const lastPass = afterCheck(2, 3, pic(1), { pass: true, issues: [] }, [pic(1, true), pic(1, true), pic(1, true)], wfAll);
+  assert.equal(lastPass.state, "captioning");
+  assert.equal((lastPass.data?.verdict as any).pass, true);
+  ok("carousel check decisions: one correction per slide, then on; the set's verdict names the failed slide");
+
+  // The carousel steps that need no picture storage run here. Picture generation and reading back the
+  // drafts need Vercel Blob, so they are checked on the live app.
+  const cPlanOf = (n: number) => ({
+    analysis: "a",
+    styleGuide: "s",
+    slides: Array.from({ length: n }, (_, k) => ({ role: k === 0 ? ("hook" as const) : ("point" as const), headline: `h${k + 1}`, body: "", imagePrompt: `p${k + 1}` })),
+  });
+  const handWritten = { ...defaultWorkflow(), skipAnalysis: true };
+  const planned = await runStep(
+    jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "hook line\npoint line\nlast line" } }),
+  );
+  assert.equal(planned.state, "generating");
+  assert.equal((planned.data?.carousel as any).slides.length, 3);
+  assert.equal((planned.data?.carousel as any).slides[0].role, "hook");
+  assert.deepEqual(planned.data?.slideImages, []);
+  assert.equal(planned.data?.slideIndex, 0);
+  await assert.rejects(
+    () => runStep(jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "one" } })),
+    /at least two lines/,
+  );
+  ok("carousel analysis, skipped: your prompts become the slides, the first is the hook");
+
+  const skipChecks = { ...defaultWorkflow(), skipVerify: true };
+  const firstSlide = await runStep(
+    jobWith("verifying", { format: "carousel", workflow: skipChecks, carousel: cPlanOf(2), slideIndex: 0, slideImages: [pic(1)] }),
+  );
+  assert.equal(firstSlide.state, "generating");
+  assert.equal(firstSlide.data?.slideIndex, 1);
+  assert.equal((firstSlide.data?.slideImages as any[])[0].pass, true);
+  const lastSlide = await runStep(
+    jobWith("verifying", { format: "carousel", workflow: skipChecks, carousel: cPlanOf(2), slideIndex: 1, slideImages: [pic(1, true), pic(1)] }),
+  );
+  assert.equal(lastSlide.state, "captioning");
+  assert.equal((lastSlide.data?.verdict as any).skipped, true);
+  ok("carousel check, skipped: each slide moves on, and the last one goes to the caption");
+
+  const albumPlan = { plan: { caption: "c", commentBody: "b", imagePrompt: "i" } };
+  const album = await runStep(
+    jobWith("publishing", {
+      format: "carousel",
+      workflow: wfAll,
+      ...albumPlan,
+      carousel: cPlanOf(2),
+      slideImages: [pic(1, true), pic(1, true)],
+    }),
+  );
+  assert.equal(album.state, "publishing");
+  assert.match((album.data?.publish as any).mediaId, /^mock-album-/);
+  assert.match(album.note ?? "", /one album of 2 pictures/);
+  await assert.rejects(
+    () => runStep(jobWith("publishing", { format: "carousel", workflow: wfAll, ...albumPlan, carousel: cPlanOf(2), slideImages: [pic(1, true)] })),
+    /has 1 of 2 pictures/,
+  );
+  ok("carousel publishing: all pictures go out as one album; a missing picture stops it with a clear message");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

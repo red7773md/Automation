@@ -12,6 +12,7 @@ import { publicMediaUrl } from "@/lib/media";
 import { defaultModels, type ModelSettings } from "@/lib/settings";
 import { normalizeWorkflow, type Workflow } from "./workflow";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
+import { analyzeCarousel, generateSlide, verifySlide } from "./carousel-steps";
 
 const kb = (bytes: number) => (bytes / 1024).toFixed(0);
 
@@ -56,6 +57,13 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
   const d = job.data;
   const wf: Workflow = normalizeWorkflow(d.workflow);
   const manual = d.manual ?? {};
+
+  // A carousel has its own analysis, pictures and check. Research and the caption are shared with a single post.
+  if ((d.format ?? "post") === "carousel") {
+    if (job.state === "analyzing") return analyzeCarousel(job, wf, models);
+    if (job.state === "generating") return generateSlide(job, models);
+    if (job.state === "verifying") return verifySlide(job, wf, models);
+  }
 
   switch (job.state) {
     case "queued": {
@@ -243,6 +251,22 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       const pub = { ...(d.publish ?? {}) };
 
       // Each sub-step is saved before the next one runs, so a retry never posts the photo twice.
+      if (!pub.mediaId && (d.format ?? "post") === "carousel") {
+        // One album post with the slides in order. Each picture has its own signed link for its slide.
+        const slides = d.slideImages ?? [];
+        const planned = d.carousel?.slides.length ?? 0;
+        if (!planned || slides.length !== planned) {
+          throw new Error(`The carousel has ${slides.length} of ${planned} pictures. Retry from the image step.`);
+        }
+        const imageUrls = slides.map((img, i) => (dryRun ? "mock://draft" : publicMediaUrl(job.id, img.attempt, i)));
+        const album = await p.instagram.postAlbum({ imageUrls, caption: plan.caption });
+        return {
+          state: "publishing",
+          data: { publish: { ...pub, mediaId: album.mediaId, dryRun } },
+          note: `${tag}carousel posted as one album of ${imageUrls.length} pictures (media ${album.mediaId})`,
+          detail: album.raw,
+        };
+      }
       if (!pub.mediaId) {
         const imageUrl = dryRun ? "mock://draft" : publicMediaUrl(job.id, job.attempts);
         const post = await p.instagram.postPhoto({ imageUrl, caption: plan.caption });

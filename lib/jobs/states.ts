@@ -1,5 +1,5 @@
 // Pure constants and types. Imported by both server and browser code.
-import type { Plan, Verdict } from "@/lib/adapters/types";
+import type { CarouselPlan, Plan, Verdict } from "@/lib/adapters/types";
 import type { ManualInputs, Workflow } from "./workflow";
 
 export const STATES = [
@@ -56,6 +56,21 @@ export const TIMELINE: readonly State[] = [
 /** One correction only: generate → verify → (fail) → generate again → verify → (fail) → human review. */
 export const MAX_GENERATIONS = 2;
 
+/** A post is one picture. A carousel is one picture per slide, posted together as one album. */
+export type JobFormat = "post" | "carousel";
+
+/** One slide's picture. `pass` stays unset until the slide has been checked. */
+export type SlideImage = {
+  attempt: number; // the job attempt that made the picture; the stored path and the link use it
+  path: string; // where the picture is kept in private storage
+  tries: number; // how many times this slide has been made
+  pass?: boolean;
+  issues?: string[];
+};
+
+/** What the next try of one slide should change: the problems found, and possibly a new prompt. */
+export type SlideFix = { index: number; notes: string[]; imagePrompt?: string };
+
 export type PublishProgress = { mediaId?: string; commentId?: string; pinned?: boolean; dryRun?: boolean };
 
 export type JobData = {
@@ -79,6 +94,12 @@ export type JobData = {
   failedStep?: State;
   publish?: PublishProgress;
   publishedAt?: string;
+  format?: JobFormat; // a missing format means a single post
+  slideCount?: number; // carousel: the number of slides chosen for this job
+  carousel?: CarouselPlan; // carousel: the analysis, the shared style and the slides in swipe order
+  slideImages?: SlideImage[]; // carousel: one entry per slide, in order, as far as they have been made
+  slideIndex?: number; // carousel: the slide being made or checked now
+  slideFix?: SlideFix | null; // carousel: what to change the next time this slide is made
 };
 
 export type JobRow = {

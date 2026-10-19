@@ -1,6 +1,8 @@
 // Per-job workflow switches and the content typed in by hand. This file has no database
 // code, so the browser can import the labels as well.
 
+import type { JobFormat } from "./states";
+
 export const WORKFLOW_KEYS = [
   "skipResearch",
   "skipAnalysis",
@@ -36,6 +38,7 @@ export const MANUAL_LIMITS = {
   imagePrompt: 2_000,
   caption: 2_200,
   commentBody: 2_200,
+  slides: 6_000, // a carousel written by hand: one image prompt per line
 } as const;
 export type ManualKey = keyof typeof MANUAL_LIMITS;
 export type ManualInputs = Partial<Record<ManualKey, string>>;
@@ -73,9 +76,14 @@ export function normalizeManual(input: unknown): ManualInputs {
 }
 
 /** The text a switch needs. Returns the first problem, or null when the job can run. */
-export function missingManual(workflow: Workflow, manual: ManualInputs): string | null {
+export function missingManual(workflow: Workflow, manual: ManualInputs, format: JobFormat = "post"): string | null {
   if (workflow.skipResearch && !manual.report) return "Paste the research report, or choose a different step to skip.";
-  if (workflow.skipAnalysis && !manual.imagePrompt) return "Write the image prompt, or choose a different step to skip.";
+  if (workflow.skipAnalysis && format === "carousel" && !manual.slides) {
+    return "Write one image prompt per line for the slides, or choose a different step to skip.";
+  }
+  if (workflow.skipAnalysis && format !== "carousel" && !manual.imagePrompt) {
+    return "Write the image prompt, or choose a different step to skip.";
+  }
   if (workflow.skipCaption && (!manual.caption || !manual.commentBody)) {
     return "Write the caption and the pinned comment text, or choose a different step to skip.";
   }

@@ -30,6 +30,19 @@ export const POST = adminRoute<P>(async (req, { params }) => {
     return json({ ok: true, state: "publishing" });
   }
 
+  if (action === "reject" && job.data.format === "carousel") {
+    // A carousel is made again from its first slide: every picture is made anew, with the reviewer's notes.
+    const [ok] = await sql`
+      update jobs set state = 'generating', error = null, updated_at = now(),
+        data = data || ${JSON.stringify({ reviewFeedback: feedback, slideImages: [], slideIndex: 0, slideFix: null, verdict: null, nextPrompt: null })}::jsonb
+      where id = ${id}::uuid and state = 'awaiting_review'
+      returning id`;
+    if (!ok) return json({ error: "The job changed. Reload the page." }, 409);
+    const slides = job.data.slideCount ? `all ${job.data.slideCount} slides` : "all the slides";
+    await logEvent(id, "awaiting_review", `Rejected. Making ${slides} again${feedback ? `: "${feedback}"` : "."}`);
+    return json({ ok: true, state: "generating" });
+  }
+
   if (action === "reject") {
     const basePrompt = job.data.imagePrompt ?? job.data.plan?.imagePrompt ?? "";
     const nextPrompt = `${basePrompt}\n\nReviewer notes: ${feedback || "fix the problems visible in the previous image"}`;
