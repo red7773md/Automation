@@ -217,6 +217,15 @@ a.rowlink:hover { color: var(--accent); text-shadow: 0 0 10px var(--glow); }
   border: 1px solid rgba(34, 211, 238, 0.35);
   box-shadow: 0 0 22px rgba(34, 211, 238, 0.14);
 }
+/* Carousel: one card per slide, in swipe order */
+.slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.slide { margin: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 3px; background: rgba(0, 0, 0, 0.25); overflow: hidden; }
+.slide img { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover; }
+.slide-empty { aspect-ratio: 1 / 1; display: grid; place-items: center; color: var(--dim); font-size: 22px; border-bottom: 1px dashed var(--line); }
+.slide figcaption { display: grid; gap: 3px; padding: 8px 9px; font-size: 12px; line-height: 1.35; word-break: break-word; }
+.slide.ok { border-color: rgba(52, 211, 153, 0.55); }
+.slide.warn { border-color: rgba(251, 191, 36, 0.6); box-shadow: 0 0 12px rgba(251, 191, 36, 0.15); }
+.slide.bad { border-color: rgba(251, 113, 133, 0.6); }
 details summary { cursor: pointer; color: var(--accent); }
 .logs {
   max-height: 460px;

@@ -63,6 +63,7 @@ export default function SettingsPage() {
       )}
       <ModelsCard />
       <WorkflowCard />
+      <CarouselCard />
       <InstagramCard configured={status.instagram.configured} />
     </>
   );
@@ -331,6 +332,85 @@ function WorkflowCard() {
       <div className="row">
         <button className="primary" disabled={busy || !changed} onClick={save}>
           Save workflow
+        </button>
+      </div>
+      {note && <p className={note.ok ? "muted" : "error"} style={{ margin: 0 }}>{note.text}</p>}
+    </section>
+  );
+}
+
+type CarouselData = {
+  carousel: { slideCount: number };
+  carouselLimits: { min: number; max: number; default: number };
+};
+
+function CarouselCard() {
+  const [data, setData] = useState<CarouselData | null>(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<Note | null>(null);
+
+  useEffect(() => {
+    api<CarouselData>("GET", "/api/settings")
+      .then((d) => {
+        setData(d);
+        setDraft(String(d.carousel.slideCount));
+      })
+      .catch((e) => setNote({ ok: false, text: e instanceof Error ? e.message : String(e) }));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await api<{ carousel: { slideCount: number } }>("PUT", "/api/settings", {
+        carousel: { slideCount: Number(draft) },
+      });
+      setDraft(String(r.carousel.slideCount));
+      setData((prev) => (prev ? { ...prev, carousel: r.carousel } : prev));
+      setNote({ ok: true, text: `Carousels now get up to ${r.carousel.slideCount} slides. New jobs start with this number.` });
+    } catch (err) {
+      setNote({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) {
+    return <section className="card">{note ? <p className="error">{note.text}</p> : <span className="muted">Loading carousel settings…</span>}</section>;
+  }
+
+  const { min, max, default: usual } = data.carouselLimits;
+  const n = Number(draft);
+  const valid = Number.isInteger(n) && n >= min && n <= max;
+  const changed = valid && n !== data.carousel.slideCount;
+
+  return (
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>Carousel</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        How many slides a carousel gets. Gemini may plan fewer when the topic needs fewer. The new job form can change the number for a single job.
+      </p>
+      <label className="stack" style={{ gap: 4 }}>
+        <span>Slides per carousel</span>
+        <span className="muted" style={{ fontSize: "0.85em" }}>From {min} to {max}. Most carousels work well at {usual}.</span>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          style={{ maxWidth: 120 }}
+        />
+      </label>
+      {!valid && <p className="error" style={{ margin: 0 }}>Choose a whole number from {min} to {max}.</p>}
+      <div className="row">
+        <button className="primary" disabled={busy || !changed} onClick={save}>
+          Save carousel
+        </button>
+        <button disabled={busy || n === usual} onClick={() => setDraft(String(usual))}>
+          Use {usual}
         </button>
       </div>
       {note && <p className={note.ok ? "muted" : "error"} style={{ margin: 0 }}>{note.text}</p>}

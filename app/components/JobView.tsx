@@ -115,6 +115,60 @@ function ImageUpload({ jobId, onDone }: { jobId: string; onDone: () => void }) {
   );
 }
 
+const ROLE_LABEL = { hook: "Hook", point: "Point", cta: "Call to action" } as const;
+
+/**
+ * One card per slide, in swipe order. Each card shows its picture once it is made, and what the
+ * slide is doing now. Only the slide being made or checked is marked as running.
+ */
+function SlideStrip({ jobId, job }: { jobId: string; job: JobRow }) {
+  const plan = job.data.carousel;
+  if (!plan) return <span className="muted">The slides are planned when the analysis finishes.</span>;
+  const images = job.data.slideImages ?? [];
+  const current = job.data.slideIndex ?? 0;
+  const running = job.state === "generating" || job.state === "verifying";
+  return (
+    <div className="slides">
+      {plan.slides.map((s, i) => {
+        const img = images[i];
+        const here = running && i === current;
+        let status = "Waiting";
+        let tone = "";
+        if (img?.pass === true) {
+          status = "Passed the check";
+          tone = "ok";
+        } else if (img?.pass === false) {
+          status = here ? "Making it again" : "Failed the check";
+          tone = here ? "warn" : "bad";
+        } else if (img) {
+          status = here && job.state === "verifying" ? "Checking…" : "Made";
+          tone = here ? "warn" : "";
+        } else if (here) {
+          status = "Making…";
+          tone = "warn";
+        } else if (job.state === "awaiting_review" || job.state === "done" || job.state === "publishing") {
+          status = "Not made";
+        }
+        return (
+          <figure key={i} className={`slide ${tone}`}>
+            {img ? (
+              <img src={`/api/jobs/${jobId}/draft?slide=${i}&v=${img.attempt}`} alt={`Slide ${i + 1}`} />
+            ) : (
+              <div className="slide-empty">{i + 1}</div>
+            )}
+            <figcaption>
+              <span className="muted">
+                {i + 1}. {ROLE_LABEL[s.role]} · {status}
+              </span>
+              <span>{s.headline || s.imagePrompt.slice(0, 80)}</span>
+            </figcaption>
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function JobView({ id }: { id: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [auto, setAuto] = useState(true);
@@ -213,6 +267,8 @@ export default function JobView({ id }: { id: string }) {
   }
 
   const { job: j, logs } = detail;
+  const isCarousel = j.data.format === "carousel";
+  const slideTotal = j.data.carousel?.slides.length ?? j.data.slideCount ?? 0;
   const current = j.state === "failed" ? j.data.failedStep : j.state;
   const stepIndex = TIMELINE.indexOf(current as State);
   const stepClass = (s: State) => {
@@ -240,7 +296,10 @@ export default function JobView({ id }: { id: string }) {
               {new Date(j.scheduled_at) > new Date() && <> · starts {new Date(j.scheduled_at).toLocaleString()}</>}
             </span>
           </div>
-          <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
+          <div className="row">
+            {isCarousel && <span className="badge">Carousel · {slideTotal} slides</span>}
+            <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
+          </div>
         </div>
 
         <div className="grid2" style={{ marginTop: 16 }}>
@@ -258,7 +317,9 @@ export default function JobView({ id }: { id: string }) {
           </ol>
           <div className="stack">
             <p className="muted">
-              Generation {j.attempts} of {MAX_GENERATIONS}
+              {isCarousel
+                ? `Slide ${Math.min((j.data.slideIndex ?? 0) + 1, slideTotal || 1)} of ${slideTotal || "?"} · pictures made ${(j.data.slideImages ?? []).length}`
+                : `Generation ${j.attempts} of ${MAX_GENERATIONS}`}
               {j.busy ? " · a step is running…" : ""}
             </p>
             {switchedOff.length > 0 && (
@@ -308,13 +369,20 @@ export default function JobView({ id }: { id: string }) {
         </section>
       )}
 
-      {j.data.draftPath && (
+      {(j.data.draftPath || isCarousel) && (
         <section className="card grid2">
-          <div className="stack">
-            <h2>Latest image</h2>
-            <img className="preview" src={`/api/jobs/${id}/draft?v=${j.attempts}`} alt="Generated draft" />
-            {j.data.lastPrompt && <p className="muted">Prompt: {j.data.lastPrompt}</p>}
-          </div>
+          {isCarousel ? (
+            <div className="stack">
+              <h2>Slides</h2>
+              <SlideStrip jobId={id} job={j} />
+            </div>
+          ) : (
+            <div className="stack">
+              <h2>Latest image</h2>
+              <img className="preview" src={`/api/jobs/${id}/draft?v=${j.attempts}`} alt="Generated draft" />
+              {j.data.lastPrompt && <p className="muted">Prompt: {j.data.lastPrompt}</p>}
+            </div>
+          )}
           <div className="stack">
             <h2>Verification</h2>
             {j.data.verdict?.skipped ? (
@@ -342,7 +410,9 @@ export default function JobView({ id }: { id: string }) {
                   {j.data.verdict?.skipped
                     ? "The image check is switched off. Approve to post."
                     : j.data.verdict && !j.data.verdict.pass
-                      ? "Verification failed twice. Decide whether to post this image or regenerate it."
+                      ? isCarousel
+                        ? "Some slides failed the check twice. Look at the slides, then post the set or make all of them again."
+                        : "Verification failed twice. Decide whether to post this image or regenerate it."
                       : "Verification passed. Approve to post."}
                 </p>
                 <div className="row">
@@ -355,7 +425,7 @@ export default function JobView({ id }: { id: string }) {
                   </button>
                 </div>
                 <textarea
-                  placeholder="Optional: what should change? This is added to the image prompt."
+                  placeholder={isCarousel ? "Optional: what should change? This is added to every slide." : "Optional: what should change? This is added to the image prompt."}
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
                 />
@@ -369,7 +439,7 @@ export default function JobView({ id }: { id: string }) {
                       })
                     }
                   >
-                    Reject &amp; regenerate
+                    {isCarousel ? "Reject & make all slides again" : "Reject & regenerate"}
                   </button>
                 </div>
               </>
@@ -388,7 +458,7 @@ export default function JobView({ id }: { id: string }) {
             <pre className="block">{j.data.plan.commentBody}</pre>
           </details>
           <details>
-            <summary className="muted">Image prompt</summary>
+            <summary className="muted">{isCarousel ? "Slide prompts" : "Image prompt"}</summary>
             <pre className="block">{j.data.plan.imagePrompt}</pre>
           </details>
           {j.data.publish && (

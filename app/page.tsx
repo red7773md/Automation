@@ -2,8 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import SkipPicker from "@/app/components/SkipPicker";
+import SkipPicker, { type StepOption } from "@/app/components/SkipPicker";
 import { api } from "@/lib/client";
+import { CAROUSEL_MAX, CAROUSEL_MIN } from "@/lib/jobs/carousel";
 import { STATE_LABEL, type State } from "@/lib/jobs/states";
 import { MANUAL_LIMITS, type ManualInputs, type ManualKey } from "@/lib/jobs/workflow";
 
@@ -16,6 +17,7 @@ type JobSummary = {
   busy: boolean;
   scheduled_at: string;
   updated_at: string;
+  format: string | null;
 };
 type Status = {
   mode: "mock" | "live";
@@ -31,8 +33,13 @@ type HealthReport = { mode: "mock" | "live"; gemini: { tools: Check; session: Ch
 const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "ok", failed: "bad" };
 
 type SwitchInfo = { id: string; label: string; hint: string };
-type SavedWorkflow = { workflow: Record<string, boolean>; workflowSwitches: SwitchInfo[] };
+type SavedWorkflow = {
+  workflow: Record<string, boolean>;
+  workflowSwitches: SwitchInfo[];
+  carousel: { slideCount: number };
+};
 type TextBox = { key: ManualKey; label: string; hint?: string; rows: number };
+type Format = "post" | "carousel";
 
 // The text boxes each switch asks for. A box appears only while its switch is on.
 const TEXT_FOR: Partial<Record<string, TextBox[]>> = {
@@ -49,12 +56,42 @@ const TEXT_FOR: Partial<Record<string, TextBox[]>> = {
   ],
 };
 
+// A carousel asks for one prompt per slide where a single post asks for one image prompt.
+const CAROUSEL_TEXT: Partial<Record<string, TextBox[]>> = {
+  skipAnalysis: [
+    {
+      key: "slides",
+      label: "Slide prompts",
+      hint: "One image prompt per line. The first line is the hook; each line after it is one slide.",
+      rows: 8,
+    },
+    { key: "analysis", label: "Analysis (optional)", hint: "Points for the caption. Leave empty to use the start of the report.", rows: 4 },
+  ],
+};
+
+const CAROUSEL_STEP_TEXT: Record<string, Partial<StepOption>> = {
+  skipAnalysis: {
+    label: "Analysis (write the slide prompts yourself)",
+    hint: "No separate Gemini chat. You give one image prompt per slide.",
+  },
+};
+
+function boxesFor(switchId: string, format: Format): TextBox[] {
+  return (format === "carousel" ? CAROUSEL_TEXT[switchId] : undefined) ?? TEXT_FOR[switchId] ?? [];
+}
+
+/** A carousel makes one picture per slide, so skipping image generation does not apply to it. */
+function stepsFor(steps: StepOption[], format: Format): StepOption[] {
+  if (format !== "carousel") return steps;
+  return steps.filter((s) => s.id !== "skipImage").map((s) => ({ ...s, ...CAROUSEL_STEP_TEXT[s.id] }));
+}
+
 /** Only the text boxes of switches that are on are sent, so text left in a hidden box is not stored. */
-function manualForSwitches(wf: Record<string, boolean>, manual: ManualInputs): ManualInputs {
+function manualForSwitches(wf: Record<string, boolean>, manual: ManualInputs, format: Format): ManualInputs {
   const out: ManualInputs = {};
-  for (const [id, boxes] of Object.entries(TEXT_FOR)) {
+  for (const id of Object.keys(wf)) {
     if (!wf[id]) continue;
-    for (const box of boxes ?? []) {
+    for (const box of boxesFor(id, format)) {
       const text = manual[box.key]?.trim();
       if (text) out[box.key] = text;
     }
@@ -87,6 +124,8 @@ export default function Dashboard() {
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [wf, setWf] = useState<Record<string, boolean>>({});
   const [manual, setManual] = useState<ManualInputs>({});
+  const [format, setFormat] = useState<Format>("post");
+  const [slideCount, setSlideCount] = useState("8"); // text, so a half-typed number can be edited
 
   async function checkServers() {
     setChecking(true);
@@ -114,6 +153,7 @@ export default function Dashboard() {
       .then((d) => {
         setDefaults(d);
         setWf(d.workflow);
+        setSlideCount(String(d.carousel.slideCount));
       })
       .catch((e) => setDefaultsError(e instanceof Error ? e.message : String(e)));
     load();
@@ -121,16 +161,36 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, [load]);
 
+  function chooseFormat(next: Format) {
+    setFormat(next);
+    // A carousel cannot skip image generation, so that switch goes off when a carousel is chosen.
+    if (next === "carousel") setWf((w) => ({ ...w, skipImage: false }));
+  }
+
   async function create(e: FormEvent) {
     e.preventDefault();
     setCreating(true);
     setError(null);
     try {
-      const body: { topic: string; scheduledAt?: string; workflow?: Record<string, boolean>; manual?: ManualInputs } = { topic };
+      const body: {
+        topic: string;
+        format: Format;
+        scheduledAt?: string;
+        workflow?: Record<string, boolean>;
+        manual?: ManualInputs;
+        slideCount?: number;
+      } = { topic, format };
       if (defaults) {
         // Without the saved defaults loaded, the server applies them itself.
         body.workflow = wf;
-        body.manual = manualForSwitches(wf, manual);
+        body.manual = manualForSwitches(wf, manual, format);
+      }
+      if (format === "carousel") {
+        const n = Number(slideCount);
+        if (!Number.isInteger(n) || n < CAROUSEL_MIN || n > CAROUSEL_MAX) {
+          throw new Error(`The number of slides must be a whole number from ${CAROUSEL_MIN} to ${CAROUSEL_MAX}`);
+        }
+        body.slideCount = n;
       }
       if (startAt) {
         const when = new Date(startAt); // the picker is in this browser's local time
@@ -172,6 +232,54 @@ export default function Dashboard() {
             placeholder="Topic, for example: why morning walks improve focus"
             maxLength={500}
           />
+          <fieldset className="stack" style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <legend className="muted" style={{ padding: 0, marginBottom: 6 }}>What do you want to make?</legend>
+            <label className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+              <input
+                type="radio"
+                name="format"
+                checked={format === "post"}
+                onChange={() => chooseFormat("post")}
+                style={{ marginTop: 4 }}
+              />
+              <span className="stack" style={{ gap: 2 }}>
+                <span>Single post</span>
+                <span className="muted" style={{ fontSize: "0.85em" }}>One picture and its caption.</span>
+              </span>
+            </label>
+            <label className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+              <input
+                type="radio"
+                name="format"
+                checked={format === "carousel"}
+                onChange={() => chooseFormat("carousel")}
+                style={{ marginTop: 4 }}
+              />
+              <span className="stack" style={{ gap: 2 }}>
+                <span>Carousel</span>
+                <span className="muted" style={{ fontSize: "0.85em" }}>
+                  Square slides people swipe through. The first slide is the hook that makes them want the next.
+                </span>
+              </span>
+            </label>
+            {format === "carousel" && (
+              <label className="stack" style={{ gap: 4, marginTop: 6 }}>
+                <span>Number of slides</span>
+                <span className="muted" style={{ fontSize: "0.85em" }}>
+                  From {CAROUSEL_MIN} to {CAROUSEL_MAX}. Gemini may plan fewer when the topic needs fewer.
+                </span>
+                <input
+                  type="number"
+                  min={CAROUSEL_MIN}
+                  max={CAROUSEL_MAX}
+                  step={1}
+                  value={slideCount}
+                  onChange={(e) => setSlideCount(e.target.value)}
+                  style={{ maxWidth: 120 }}
+                />
+              </label>
+            )}
+          </fieldset>
           <label className="stack">
             <span className="muted">Start at (optional, your local time). Leave empty to start now.</span>
             <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
@@ -182,10 +290,10 @@ export default function Dashboard() {
               <span className="muted">{defaultsError ?? "Loading steps…"}</span>
             ) : (
               <>
-                <SkipPicker steps={defaults.workflowSwitches} value={wf} onChange={setWf} />
+                <SkipPicker steps={stepsFor(defaults.workflowSwitches, format)} value={wf} onChange={setWf} />
                 {defaults.workflowSwitches
                   .filter((s) => wf[s.id])
-                  .flatMap((s) => TEXT_FOR[s.id] ?? [])
+                  .flatMap((s) => boxesFor(s.id, format))
                   .map((box) => (
                     <label key={box.key} className="stack" style={{ gap: 4 }}>
                       <span>{box.label}</span>
@@ -203,7 +311,7 @@ export default function Dashboard() {
           </div>
           <div className="row">
             <button className="primary" disabled={creating || topic.trim().length < 3}>
-              {creating ? "Starting…" : "Start job"}
+              {creating ? "Starting…" : format === "carousel" ? "Start carousel" : "Start job"}
             </button>
             <span className="muted">
               {wf.skipApproval ? "Posts as soon as its check passes, with no review from you." : "You approve before anything is posted."}
@@ -257,6 +365,7 @@ export default function Dashboard() {
                     <a className="rowlink" href={`/jobs/${j.id}`}>
                       {j.topic}
                     </a>
+                    {j.format === "carousel" && <span className="badge" style={{ marginLeft: 8 }}>Carousel</span>}
                   </td>
                   <td>
                     <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
