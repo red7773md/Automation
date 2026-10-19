@@ -76,6 +76,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .stack { display: grid; gap: 10px; align-content: start; }
+.stack > p { margin: 0; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .muted { color: var(--muted); font-size: 13px; }
 
@@ -193,8 +194,76 @@ a.rowlink:hover { color: var(--accent); text-shadow: 0 0 10px var(--glow); }
   0%, 100% { box-shadow: 0 0 0 0 var(--glow); }
   50% { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); }
 }
+/* Progress between steps: a line joins each step to the next. It turns green behind finished steps,
+   and the line leaving the running step flows downward while the step works. */
+.timeline li { position: relative; }
+.timeline li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 7px; /* the centre of the diamond */
+  top: 50%;
+  bottom: calc(-50% - 9px); /* down to the centre of the next step; 9px is the gap between steps */
+  width: 1px;
+  background: var(--dim);
+  transition: background-color 0.4s, box-shadow 0.4s;
+}
+.timeline li.done:not(:last-child)::before { background: var(--ok); box-shadow: 0 0 6px rgba(52, 211, 153, 0.45); }
+.timeline li.current:not(:last-child)::before {
+  background: repeating-linear-gradient(to bottom, var(--accent) 0 5px, transparent 5px 10px);
+  animation: flow 0.9s linear infinite;
+}
+.timeline li.current.running .dot { animation-duration: 0.9s; }
+@keyframes flow {
+  from { background-position: 0 0; }
+  to { background-position: 0 10px; }
+}
+
+/* Overall progress for the job: fills as the steps finish, sweeps while a step runs */
+.progress { position: relative; height: 6px; margin: 0 0 16px; border: 1px solid var(--line); border-radius: 3px; background: rgba(0, 0, 0, 0.35); overflow: hidden; }
+.progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+  box-shadow: 0 0 12px var(--glow);
+  transition: width 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.progress.live .progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  transform: translateX(-100%);
+  animation: sweep 1.6s ease-in-out infinite;
+}
+.progress.bad .progress-fill { background: var(--bad); box-shadow: 0 0 12px rgba(251, 113, 133, 0.5); }
+@keyframes sweep { to { transform: translateX(100%); } }
+
+/* Headings that divide a page into groups */
+.group-title {
+  margin: 14px 0 -4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.group-title::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
+
+/* A section that opens on click, such as the technical log */
+.fold > summary { list-style: none; cursor: pointer; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent); }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: "> "; color: var(--muted); }
+.fold[open] > summary::before { content: "v "; }
+
 @media (prefers-reduced-motion: reduce) {
   .timeline li.current .dot { animation: none; }
+  .timeline li.current:not(:last-child)::before { animation: none; }
+  .progress.live .progress-fill::after { animation: none; }
+  .progress-fill { transition: none; }
 }
 
 /* Code-like blocks, previews and the technical log */

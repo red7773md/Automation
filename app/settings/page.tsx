@@ -37,6 +37,7 @@ export default function SettingsPage() {
 
   return (
     <>
+      <h3 className="group-title">Connections</h3>
       <section className="card stack">
         <h2 style={{ margin: 0 }}>Connections</h2>
         <div className="row">
@@ -61,10 +62,11 @@ export default function SettingsPage() {
       {status.imageProvider === "chatgpt" && (
         <CookieCard provider="chatgpt" label="ChatGPT" meta={status.chatgpt} transport={status.transports.chatgpt} onChange={load} />
       )}
+      <InstagramCard configured={status.instagram.configured} />
+      <h3 className="group-title">Making posts</h3>
       <ModelsCard />
       <WorkflowCard />
       <CarouselCard />
-      <InstagramCard configured={status.instagram.configured} />
     </>
   );
 }

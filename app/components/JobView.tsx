@@ -277,6 +277,8 @@ export default function JobView({ id }: { id: string }) {
     if (j.state === "failed") return i === stepIndex ? "failed" : i < stepIndex ? "done" : "";
     return i < stepIndex ? "done" : i === stepIndex ? "current" : "";
   };
+  // Overall progress: the job's place on the timeline. A finished job is full, a failed one stops where it failed.
+  const pct = j.state === "done" ? 100 : stepIndex < 0 ? 0 : Math.round((stepIndex / (TIMELINE.length - 1)) * 100);
   const canRun = RUNNABLE.includes(j.state) && !j.busy && !working && !waitsForUpload(j);
   const switchedOff = WORKFLOW_KEYS.filter((k) => j.data.workflow?.[k]);
   const skippedStates = new Set<State>(
@@ -302,12 +304,28 @@ export default function JobView({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="grid2" style={{ marginTop: 16 }}>
+        <div
+          className={`progress${j.busy ? " live" : ""}${j.state === "failed" ? " bad" : ""}`}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+          aria-label="Job progress"
+          style={{ marginTop: 16 }}
+        >
+          <div className="progress-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="grid2">
           <ol className="timeline">
             {TIMELINE.map((s) => {
               const skipped = isSkipped(s);
+              const running = s === current && j.busy;
               return (
-                <li key={s} className={skipped ? "skipped" : stepClass(s)} style={skipped ? { opacity: 0.5 } : undefined}>
+                <li
+                  key={s}
+                  className={`${skipped ? "skipped" : stepClass(s)}${running ? " running" : ""}`}
+                  style={skipped ? { opacity: 0.5 } : undefined}
+                >
                   <span className="dot" />
                   {STATE_LABEL[s]}
                   {skipped && " · skipped"}
@@ -471,12 +489,13 @@ export default function JobView({ id }: { id: string }) {
         </section>
       )}
 
-      <section className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0 }}>Technical log</h2>
-          <button onClick={copyReport}>{copied ? "Copied" : "Copy debug report"}</button>
-        </div>
-        <div className="logs">
+      <details className="card fold">
+        <summary>Technical log · {logs.length} {logs.length === 1 ? "entry" : "entries"}</summary>
+        <div className="stack" style={{ marginTop: 14 }}>
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button onClick={copyReport}>{copied ? "Copied" : "Copy debug report"}</button>
+          </div>
+          <div className="logs">
           {logs.length === 0 && <div className="muted">No log entries yet.</div>}
           {logs.map((l) => (
             <div key={l.id} className={`log ${l.level}`}>
@@ -492,8 +511,9 @@ export default function JobView({ id }: { id: string }) {
               )}
             </div>
           ))}
+          </div>
         </div>
-      </section>
+      </details>
     </>
   );
 }
