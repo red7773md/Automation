@@ -26,10 +26,18 @@ export type StepResult = {
   quiet?: boolean; // a waiting step: do not write a log line on every poll
 };
 
-const RESEARCH_TIMEOUT_MIN = 45; // deep research normally takes 5 to 10 minutes
+// Deep research usually takes 5 to 10 minutes but can run for hours. Retrying the job restarts this clock.
+const RESEARCH_TIMEOUT_MIN = 180;
 const MAX_TEXT = 2200; // Instagram caption and comment limit
 const POINTER = "👇 Full details in the pinned comment";
 const ANALYSIS_EXCERPT = 1500; // used as the analysis when you skip analysis and write no analysis text
+
+/** True once deep research has been running longer than the limit. No start time: never times out. */
+export function researchTimedOut(startedAt: string | undefined, now = Date.now()): boolean {
+  if (!startedAt) return false;
+  const started = new Date(startedAt).getTime();
+  return Number.isFinite(started) && (now - started) / 60_000 > RESEARCH_TIMEOUT_MIN;
+}
 
 export function normalizePlan(p: Partial<Plan>): Plan {
   const missing = (["caption", "commentBody", "imagePrompt"] as const).filter((k) => !p[k]?.trim());
@@ -92,14 +100,17 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       }
       const poll = await p.gemini.pollResearch(d.researchRef);
       if (poll.status === "running") {
-        const elapsedMin = (Date.now() - new Date(d.researchStartedAt ?? Date.now()).getTime()) / 60_000;
-        if (elapsedMin > RESEARCH_TIMEOUT_MIN) {
-          throw new Error(`Deep research did not finish within ${RESEARCH_TIMEOUT_MIN} minutes. Retry the job or simplify the topic.`);
+        if (researchTimedOut(d.researchStartedAt)) {
+          throw new Error(
+            `Deep research did not finish within ${RESEARCH_TIMEOUT_MIN} minutes. Gemini still reported it as running. Retry the job to check again, or simplify the topic.`,
+          );
         }
         return {
           state: "researching",
           pending: true,
           note: `Deep research still running${poll.progress ? `: ${poll.progress}` : ""}`,
+          // Gemini's own reply, so a stuck job shows what it said.
+          detail: poll.raw ? { geminiReply: poll.raw } : undefined,
         };
       }
       if (poll.status === "failed" || !poll.report) {

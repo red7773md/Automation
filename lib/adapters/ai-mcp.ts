@@ -244,8 +244,9 @@ export function interpretPoll(text: string): ResearchPoll {
     if (!status && report) return { status: "done", report };
     return { status: "running", progress: status || "waiting for Gemini" };
   }
-  if (RUNNING.test(text)) return { status: "running", progress: text.trim().slice(0, 120) };
+  // A long plain-text reply is the report. Checked first, so a report that merely contains "still" is not "running".
   if (text.trim().length > 300) return { status: "done", report: text };
+  if (RUNNING.test(text)) return { status: "running", progress: text.trim().slice(0, 120) };
   return { status: "running", progress: text.trim().slice(0, 120) || "no content yet" };
 }
 
@@ -306,7 +307,8 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
     pollResearch: (ref) =>
       r.run("pollResearch", async (client, route, cookie) => {
         const res = await r.call(client, route, { ref }, cookie);
-        return interpretPoll(res.text);
+        const poll = interpretPoll(res.text);
+        return poll.status === "running" ? { ...poll, raw: res.text.trim().slice(0, 300) } : poll;
       }),
     analyze: ({ topic, report, model }) =>
       r.run("analyze", async (client, route, cookie): Promise<Analysis> => {

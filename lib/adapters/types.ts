@@ -37,6 +37,7 @@ export type ResearchPoll = {
   progress?: string;
   report?: string;
   error?: string;
+  raw?: string; // Gemini's reply while running, kept in the job log
 };
 
 export type Health = { ok: boolean; message: string; details?: Record<string, unknown> };

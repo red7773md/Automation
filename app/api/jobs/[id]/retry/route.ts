@@ -14,8 +14,11 @@ export const POST = adminRoute<P>(async (_req, { params }) => {
   if (job.state !== "failed") return json({ error: `Job is "${job.state}", not failed` }, 409);
 
   const step = (job.data?.failedStep as string | undefined) ?? "queued";
+  // A research retry keeps the same Gemini research but gets a fresh time limit, so it is not failed again at once.
+  const restart = step === "researching" ? { researchStartedAt: new Date().toISOString() } : {};
   const [ok] = await sql`
-    update jobs set state = ${step}, error = null, updated_at = now()
+    update jobs set state = ${step}, error = null, updated_at = now(),
+      data = data || ${JSON.stringify(restart)}::jsonb
     where id = ${id}::uuid and state = 'failed'
     returning id`;
   if (!ok) return json({ error: "The job changed. Reload the page." }, 409);

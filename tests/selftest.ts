@@ -351,7 +351,15 @@ async function main() {
   assert.equal(interpretPoll('{"status":"failed","error":"quota"}').error, "quota");
   assert.equal(interpretPoll("Still researching the topic, please wait").status, "running");
   assert.equal(interpretPoll("x".repeat(400)).status, "done");
+  assert.equal(interpretPoll(`${"Findings and sources. ".repeat(30)}Demand is still growing.`).status, "done", "a long report that says 'still' is done");
   ok("research poll replies: JSON and plain text interpreted as running, done or failed");
+
+  const { researchTimedOut } = await import("@/lib/jobs/steps");
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  assert.equal(researchTimedOut(minutesAgo(50)), false, "50 minutes is still within the limit");
+  assert.equal(researchTimedOut(minutesAgo(200)), true, "past 3 hours it times out");
+  assert.equal(researchTimedOut(undefined), false, "no start time never times out");
+  ok("research time limit: 3 hours, measured from the start; no start time never times out");
 
   // SSE replies: the same client must read a text/event-stream response
   const sseFake = await startFakeMcp({ sse: true, tools: [{ name: "instagram_pin_comment", inputSchema: { properties: {} }, handle: () => ({ text: "ok" }) }] });
