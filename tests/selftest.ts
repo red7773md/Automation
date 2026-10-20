@@ -648,6 +648,22 @@ async function main() {
   assert.equal(carousel.expectedText(point), undefined, "a slide written by hand has no text to check");
   ok("slide prompts: the hook says swipe and shows its text; corrections are added; hand-written slides have no text to check");
 
+  // A long revised prompt from the check, plus a long correction, once made a prompt over the image tool's 1000-character limit.
+  const longIdea = `${"A glowing blue beam splits into bright pathways over a slate background. ".repeat(12)}`;
+  const longNotes = ["The main headline text contains misspellings, repetition, and garbled words.", "The small text is cut off at the edge."];
+  const fitted = carousel.slidePrompt("Dark slate background with electric blue accents. ".repeat(3), { ...hook, imagePrompt: longIdea }, { index: 0, total: 8 }, longNotes);
+  assert.ok(fitted.length <= 1000, `prompt is ${fitted.length} characters, over the 1000 limit`);
+  assert.ok(fitted.includes('"Why coffee helps"') && fitted.includes('"Three facts"'), "the text the picture must show is kept whole");
+  assert.ok(fitted.includes("Swipe for more") && fitted.includes("Slide 1 of 8"), "the swipe line and position are kept");
+  const shortOne = carousel.slidePrompt("Flat illustration.", { role: "point", headline: "", body: "", imagePrompt: "steam" }, { index: 2, total: 8 });
+  assert.equal(shortOne, "Style for every slide of this carousel: Flat illustration.\nSlide 3 of 8.\nsteam", "a short prompt is unchanged");
+  const { cutTo, MAX_IMAGE_PROMPT } = await import("@/lib/prompt-length");
+  assert.equal(MAX_IMAGE_PROMPT, 1000);
+  assert.equal(cutTo("short", 10), "short");
+  assert.equal(cutTo("one two three four", 10), "one two", "cut at a word boundary");
+  assert.equal(cutTo("abc", 0), "");
+  ok("image prompts: never over 1000 characters; the text the picture must show is kept; short prompts unchanged");
+
   const img = (pass: boolean | undefined, issues?: string[]) => ({ attempt: 1, path: "drafts/x/1/1", tries: 1, pass, issues });
   assert.deepEqual(carousel.carouselVerdict([img(true), img(true)], 2, false), { pass: true, issues: [] });
   const mixed = carousel.carouselVerdict([img(true), img(false, ["text garbled"]), img(true)], 3, false);

@@ -4,6 +4,7 @@ import { extractJson } from "@/lib/adapters/parse";
 import type { CarouselPlan, Slide, Verdict } from "@/lib/adapters/types";
 import type { JobFormat, SlideImage } from "./states";
 import type { Workflow } from "./workflow";
+import { cutTo, MAX_IMAGE_PROMPT } from "@/lib/prompt-length";
 
 export const CAROUSEL_MIN = 3;
 export const CAROUSEL_MAX = 10; // Instagram allows at most 10 pictures in one carousel
@@ -60,19 +61,42 @@ export function slidesFromLines(text: string, max: number): Slide[] {
   return lines.map((imagePrompt, i): Slide => ({ role: i === 0 ? "hook" : "point", headline: "", body: "", imagePrompt }));
 }
 
-/** The prompt for one slide. Every slide gets the same style, so the set reads as one post. */
+type SlideParts = { style: string; fixed: string; idea: string; notes: string };
+
+function joinParts(p: SlideParts): string {
+  return [p.style, p.fixed, p.idea, p.notes].filter(Boolean).join("\n");
+}
+
+/**
+ * The prompt for one slide. Every slide gets the same style, so the set reads as one post.
+ * The image tool takes at most MAX_IMAGE_PROMPT characters. The text the picture must show is
+ * never cut; the picture idea and the notes are shortened first, then the style.
+ */
 export function slidePrompt(style: string, slide: Slide, position: { index: number; total: number }, notes: string[] = []): string {
-  return [
-    style ? `Style for every slide of this carousel: ${style}` : "",
-    `Slide ${position.index + 1} of ${position.total}.`,
-    slide.headline ? `Show this text exactly as written, large and easy to read: "${slide.headline}".` : "",
-    slide.body ? `Under it, a smaller line of text, exactly as written: "${slide.body}".` : "",
-    slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow in the bottom-right corner.` : "",
-    slide.imagePrompt,
-    notes.length ? `Fix these problems: ${notes.join(" ")}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const p: SlideParts = {
+    style: style ? `Style for every slide of this carousel: ${style}` : "",
+    fixed: [
+      `Slide ${position.index + 1} of ${position.total}.`,
+      slide.headline ? `Show this text exactly as written, large and easy to read: "${slide.headline}".` : "",
+      slide.body ? `Under it, a smaller line of text, exactly as written: "${slide.body}".` : "",
+      slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow in the bottom-right corner.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    idea: slide.imagePrompt,
+    notes: notes.length ? `Fix these problems: ${notes.join(" ")}` : "",
+  };
+  let over = joinParts(p).length - MAX_IMAGE_PROMPT;
+  if (over > 0) {
+    p.notes = cutTo(p.notes, p.notes.length - over);
+    over = joinParts(p).length - MAX_IMAGE_PROMPT;
+  }
+  if (over > 0) {
+    p.idea = cutTo(p.idea, p.idea.length - over);
+    over = joinParts(p).length - MAX_IMAGE_PROMPT;
+  }
+  if (over > 0) p.style = cutTo(p.style, p.style.length - over);
+  return cutTo(joinParts(p), MAX_IMAGE_PROMPT); // last resort, only if the fixed text alone is too long
 }
 
 /** The headline the picture must show, for the check. Slides written by hand have none. */

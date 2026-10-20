@@ -5,6 +5,7 @@
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { parseCarouselPlan } from "@/lib/jobs/carousel";
+import { cutTo, MAX_IMAGE_PROMPT } from "@/lib/prompt-length";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
 import { ANALYZE_PROMPT, CAPTION_PROMPT, CAROUSEL_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
 import type { AccountModel, AccountModels, Analysis, Caption, CarouselPlan, Health, Providers, ResearchPoll, Verdict } from "./types";
@@ -369,7 +370,8 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
       }),
     generateImage: (prompt, model) =>
       r.run("generateImage", async (client, route, cookie) => {
-        const res = await r.call(client, route, { prompt, model }, cookie);
+        // The tool refuses longer prompts. Slide prompts are already fitted; this is the last safety net.
+        const res = await r.call(client, route, { prompt: cutTo(prompt, MAX_IMAGE_PROMPT), model }, cookie);
         return extractImage(res);
       }),
   };
