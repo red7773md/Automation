@@ -102,6 +102,7 @@ plus `failed`. A failed job stores `failedStep`, and Retry resumes at that step.
 - **researching:** the first call starts research and stores `researchRef` and `researchStartedAt`.
   Later calls poll until done. Over 3 hours, the job fails. Retry restarts that 3-hour clock on the same research.
   Each poll that is still running logs Gemini's own reply, so a stuck job shows what Gemini said.
+  If Gemini "did not connect in time" when starting, the step tries again (up to 5 times) before it fails.
 - **planning:** Gemini returns JSON with `caption`, `commentBody`, `imagePrompt`. The research report is cleared.
 - **generating:** Gemini generates the image (`IMAGE_PROVIDER`). Saved privately to Blob. `attempts` increases.
 - **verifying:** Gemini checks the image. Pass goes to review. Fail with `attempts < 2` regenerates

@@ -28,6 +28,8 @@ export type StepResult = {
 
 // Deep research usually takes 5 to 10 minutes but can run for hours. Retrying the job restarts this clock.
 const RESEARCH_TIMEOUT_MIN = 180;
+// Gemini sometimes says it did not connect in time. That passes, so the step tries again.
+const START_TRIES = 5;
 const MAX_TEXT = 2200; // Instagram caption and comment limit
 const POINTER = "👇 Full details in the pinned comment";
 const ANALYSIS_EXCERPT = 1500; // used as the analysis when you skip analysis and write no analysis text
@@ -37,6 +39,11 @@ export function researchTimedOut(startedAt: string | undefined, now = Date.now()
   if (!startedAt) return false;
   const started = new Date(startedAt).getTime();
   return Number.isFinite(started) && (now - started) / 60_000 > RESEARCH_TIMEOUT_MIN;
+}
+
+/** Gemini's "did not connect in time" reply. It passes on its own, so trying again is worth it. */
+export function isTransientConnectError(message: string): boolean {
+  return /did not connect/i.test(message) || /try again/i.test(message);
 }
 
 export function normalizePlan(p: Partial<Plan>): Plan {
@@ -90,10 +97,26 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
 
     case "researching": {
       if (!d.researchRef) {
-        const { ref } = await p.gemini.startResearch(job.topic, models.research);
+        let started: { ref: string };
+        try {
+          started = await p.gemini.startResearch(job.topic, models.research);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!isTransientConnectError(message)) throw err;
+          const tries = (d.startTries ?? 0) + 1;
+          if (tries >= START_TRIES) {
+            throw new Error(`Gemini did not connect after ${START_TRIES} tries. Check the Gemini server's cookies, then retry the job. Last reply: ${message}`);
+          }
+          return {
+            state: "researching",
+            data: { startTries: tries },
+            pending: true,
+            note: `Gemini did not connect (try ${tries} of ${START_TRIES}). Trying again.`,
+          };
+        }
         return {
           state: "researching",
-          data: { researchRef: ref, researchStartedAt: new Date().toISOString() },
+          data: { researchRef: started.ref, researchStartedAt: new Date().toISOString() },
           pending: true,
           note: "Deep research started on Gemini",
         };

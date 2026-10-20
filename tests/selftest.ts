@@ -361,6 +361,15 @@ async function main() {
   assert.equal(researchTimedOut(undefined), false, "no start time never times out");
   ok("research time limit: 3 hours, measured from the start; no start time never times out");
 
+  const { isTransientConnectError } = await import("@/lib/jobs/steps");
+  assert.equal(
+    isTransientConnectError("gemini_start_deep_research returned an error: Gemini did not connect in time. Try again in a moment."),
+    true,
+  );
+  assert.equal(isTransientConnectError("Gemini MCP did not return a research id."), false);
+  assert.equal(isTransientConnectError("Deep research failed: quota exceeded"), false);
+  ok("Gemini 'did not connect in time' is retried; other start errors are not");
+
   // SSE replies: the same client must read a text/event-stream response
   const sseFake = await startFakeMcp({ sse: true, tools: [{ name: "instagram_pin_comment", inputSchema: { properties: {} }, handle: () => ({ text: "ok" }) }] });
   process.env.INSTAGRAM_MCP_URL = sseFake.url;

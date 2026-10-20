@@ -76,6 +76,7 @@ export type PublishProgress = { mediaId?: string; commentId?: string; pinned?: b
 export type JobData = {
   researchRef?: string;
   researchStartedAt?: string;
+  startTries?: number; // tries to start deep research while Gemini did not connect
   report?: string | null;
   reportPath?: string; // the report saved as a Markdown file in Blob storage
   workflow?: Workflow; // the switches this job was created with
