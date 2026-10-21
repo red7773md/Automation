@@ -11,7 +11,7 @@ import { loadCarousel, loadWorkflow } from "@/lib/settings";
 export const GET = adminRoute(async () => {
   const sql = await getDb();
   const jobs = await sql`
-    select id, topic, state, busy, attempts, error, scheduled_at, created_at, updated_at, data->>'format' as format
+    select id, topic, state, busy, attempts, error, scheduled_at, created_at, updated_at, data->>'format' as format, data->>'research' as research
     from jobs order by created_at desc limit 50`;
   return json({ jobs });
 });

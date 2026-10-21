@@ -18,6 +18,7 @@ type JobSummary = {
   scheduled_at: string;
   updated_at: string;
   format: string | null;
+  research: string | null;
 };
 type Status = {
   mode: "mock" | "live";
@@ -126,6 +127,7 @@ export default function Dashboard() {
   const [manual, setManual] = useState<ManualInputs>({});
   const [format, setFormat] = useState<Format>("post");
   const [slideCount, setSlideCount] = useState("8"); // text, so a half-typed number can be edited
+  const [research, setResearch] = useState<"deep" | "quick">("deep");
 
   async function checkServers() {
     setChecking(true);
@@ -175,11 +177,12 @@ export default function Dashboard() {
       const body: {
         topic: string;
         format: Format;
+        research: "deep" | "quick";
         scheduledAt?: string;
         workflow?: Record<string, boolean>;
         manual?: ManualInputs;
         slideCount?: number;
-      } = { topic, format };
+      } = { topic, format, research };
       if (defaults) {
         // Without the saved defaults loaded, the server applies them itself.
         body.workflow = wf;
@@ -280,6 +283,42 @@ export default function Dashboard() {
               </label>
             )}
           </fieldset>
+          <fieldset className="stack" style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <legend className="muted" style={{ padding: 0, marginBottom: 6 }}>How to research the topic</legend>
+            <label className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+              <input
+                type="radio"
+                name="research"
+                checked={research === "deep"}
+                onChange={() => setResearch("deep")}
+                style={{ marginTop: 4 }}
+              />
+              <span className="stack" style={{ gap: 2 }}>
+                <span>Deep research</span>
+                <span className="muted" style={{ fontSize: "0.85em" }}>
+                  Gemini reads widely and writes a full report. Slower, often 5 to 10 minutes.
+                </span>
+              </span>
+            </label>
+            <label className="row" style={{ alignItems: "flex-start", gap: 10 }}>
+              <input
+                type="radio"
+                name="research"
+                checked={research === "quick"}
+                onChange={() => setResearch("quick")}
+                style={{ marginTop: 4 }}
+              />
+              <span className="stack" style={{ gap: 2 }}>
+                <span>Quick search and check</span>
+                <span className="muted" style={{ fontSize: "0.85em" }}>
+                  One web search. Each fact is checked against the page it comes from, and those sources are added to the pinned comment. Saves time.
+                </span>
+              </span>
+            </label>
+            {wf.skipResearch && (
+              <span className="muted" style={{ fontSize: "0.85em" }}>Research is switched off for this job, so you paste the report yourself.</span>
+            )}
+          </fieldset>
           <label className="stack">
             <span className="muted">Start at (optional, your local time). Leave empty to start now.</span>
             <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
@@ -366,6 +405,7 @@ export default function Dashboard() {
                       {j.topic}
                     </a>
                     {j.format === "carousel" && <span className="badge" style={{ marginLeft: 8 }}>Carousel</span>}
+                    {j.research === "quick" && <span className="badge" style={{ marginLeft: 8 }}>Quick check</span>}
                   </td>
                   <td>
                     <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
