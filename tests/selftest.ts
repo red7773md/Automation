@@ -848,6 +848,104 @@ async function main() {
   );
   ok("carousel publishing: all pictures go out as one album; a missing picture stops it with a clear message");
 
+  // ---------- quick research: search, page check, sources in the post ----------
+  const { parseResearchStyle, parseSearchReply, parseConfirmReply, keepConfirmed, citedSources, buildQuickReport, withSources } = await import(
+    "@/lib/jobs/quick"
+  );
+  const { fetchSource, htmlToText } = await import("@/lib/sources");
+
+  assert.equal(parseResearchStyle(undefined), "deep");
+  assert.equal(parseResearchStyle("quick"), "quick");
+  assert.throws(() => parseResearchStyle("fast"), /"deep" or "quick"/);
+  ok("research style: missing means deep; only deep or quick are accepted");
+
+  const search = parseSearchReply(
+    JSON.stringify({
+      summary: "S",
+      points: [
+        { claim: "Fact A", url: "https://a.example/x", title: "Page A" },
+        { claim: "No address", url: "", title: "Nope" },
+        { claim: "Not web", url: "ftp://files.example/x", title: "Ftp" },
+        { claim: "Fact B", url: "https://b.example/y", title: "" },
+      ],
+    }),
+  );
+  assert.deepEqual(search.points.map((p) => p.claim), ["Fact A", "Fact B"]);
+  assert.equal(search.points[1].title, "https://b.example/y", "a missing title falls back to the address");
+  assert.throws(() => parseSearchReply('{"points":[]}'), /no facts with web addresses/);
+  ok("search reply: facts without a web address are dropped; a missing title falls back to the address");
+
+  const checked = parseConfirmReply(
+    JSON.stringify({
+      checks: [
+        { claim: "Fact A", url: "https://a.example/x", supported: true, reason: "the page says so" },
+        { claim: "Fact B", url: "https://b.example/y", supported: "false", reason: "not on the page" },
+      ],
+    }),
+    search.points,
+  );
+  assert.equal(checked[0].supported, true);
+  assert.equal(checked[0].title, "Page A", "the title comes from the search, not from the checker");
+  assert.equal(checked[1].supported, false, "only a yes counts as supported");
+  const kept = keepConfirmed(
+    [...checked, { claim: "Fact C", url: "https://c.example/z", title: "C", supported: true }],
+    new Set(["https://a.example/x"]),
+  );
+  assert.deepEqual(kept.map((k) => k.claim), ["Fact A"], "a fact is kept only when supported and its page could be read");
+  const cited = citedSources(kept);
+  assert.deepEqual(cited, [{ url: "https://a.example/x", title: "Page A" }]);
+  const checkedReport = buildQuickReport("Coffee", kept);
+  assert.ok(checkedReport.includes("# Checked facts: Coffee") && checkedReport.includes("- Fact A ([Page A](https://a.example/x))"), checkedReport);
+  ok("checked facts: only supported facts with a readable page are kept; the report and sources list them");
+
+  const withBlock = withSources("Body text", cited);
+  assert.ok(withBlock.startsWith("Body text") && withBlock.includes("Sources, checked before posting:") && withBlock.includes("https://a.example/x"));
+  assert.equal(withSources("Plain", undefined), "Plain", "no sources: the comment is unchanged");
+  assert.ok(withSources("x".repeat(3000), cited).length <= 2200, "the comment stays within the limit");
+  assert.ok(withSources("x".repeat(3000), cited).includes("https://a.example/x"), "the sources survive a long comment");
+  ok("pinned comment: sources added at the end, and the whole comment stays within the limit");
+
+  const local = await fetchSource("http://127.0.0.1:9/page", "Local");
+  assert.equal(local.ok, false);
+  assert.match(local.error ?? "", /private network/);
+  const localName = await fetchSource("http://localhost/page", "Local");
+  assert.equal(localName.ok, false);
+  const notWeb = await fetchSource("ftp://example.com/file", "Ftp");
+  assert.equal(notWeb.ok, false);
+  assert.equal(
+    htmlToText("<html><script>var x=1</script><p>Coffee &amp; tea</p><style>p{}</style><p>Ok</p></html>"),
+    "Coffee & tea Ok",
+  );
+  ok("sources: private, local and non-web addresses are refused without a request; page text drops scripts and tags");
+
+  const quickFake = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_chat",
+        description: "Ask Gemini a question in a chat.",
+        inputSchema: { properties: { prompt: { type: "string" }, model: { type: "string" } }, required: ["prompt"] },
+        handle: (args) => ({
+          text: String(args.prompt).includes("exactly these keys")
+            ? JSON.stringify({ summary: "Two sources agree.", points: [{ claim: "Fact A", url: "https://a.example/x", title: "Page A" }] })
+            : JSON.stringify({ checks: [{ claim: "Fact A", url: "https://a.example/x", supported: true, reason: "the page says so" }] }),
+        }),
+      },
+    ],
+  });
+  const quickGemini = createGemini({ url: () => quickFake.url, toolMap: () => undefined, cookie: async () => null });
+  const found = await quickGemini.search({ topic: "coffee" });
+  assert.equal(found.points.length, 1);
+  assert.match(String(quickFake.calls[0].args.prompt), /exactly these keys/);
+  const verdicts = await quickGemini.confirm({
+    topic: "coffee",
+    points: found.points,
+    sources: [{ url: "https://a.example/x", title: "Page A", text: "Page text about Fact A" }],
+  });
+  assert.equal(verdicts[0].supported, true);
+  assert.match(String(quickFake.calls.at(-1)!.args.prompt), /Page text about Fact A/, "the check sends the page text");
+  await quickFake.close();
+  ok("Gemini quick research: search returns facts with web addresses; the check sends the page text and reads the verdict");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

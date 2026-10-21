@@ -81,6 +81,11 @@ export const mockProviders: Providers = {
         imagePrompt: `Slide ${i + 1}: a simple flat illustration about ${topic}, square format.`,
       })),
     }),
+    search: async ({ topic }) => ({
+      summary: `Mock search about ${topic}.`,
+      points: [1, 2, 3].map((n) => ({ claim: `Mock fact ${n} about ${topic}`, url: `https://example.com/mock-${n}`, title: `Mock source ${n}` })),
+    }),
+    confirm: async ({ points }) => points.map((p) => ({ ...p, supported: true })),
     caption: async ({ topic }) => ({
       caption: `Quick take on ${topic} 🧠 Save this for later.\n\n#mock #instagram #${topic.replace(/\W+/g, "").slice(0, 20)}`,
       commentBody: `Full breakdown of ${topic}:\n\n1) First key point\n2) Second key point\n3) Third key point\n\n(mock content)`,

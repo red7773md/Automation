@@ -70,6 +70,30 @@ Return ONLY a JSON object:
 {"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt that fixes the problems (only when pass is false, otherwise an empty string)"}
 Do not write anything outside the JSON.`;
 
+export const SEARCH_PROMPT = `Search the web now for reliable, recent information about the topic below. Use only pages you actually found in that search.
+Return ONLY a JSON object with exactly these keys:
+- "summary": two or three sentences on what the sources agree on.
+- "points": up to 8 objects. Each has "claim" (one specific fact in one sentence, no opinion), "url" (the full address of the page the fact comes from, starting with https://) and "title" (the page's title).
+Prefer official, academic, government and major news sources. Do not invent sources or addresses. If you cannot find a source for a fact, leave that fact out.
+Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
+
+Topic: {topic}
+`;
+
+export const CONFIRM_PROMPT = `You are checking facts against their sources before they are posted publicly.
+For each point below, decide whether the source text given for its address states or clearly supports the claim. A claim is supported only when the source text says so. General knowledge is not enough.
+Return ONLY a JSON object: {"checks": [{"claim": "...", "url": "...", "supported": true or false, "reason": "one short sentence"}]} with one entry per point, in the same order.
+Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
+
+Topic: {topic}
+
+Points to check:
+{points}
+
+Sources:
+{sources}
+`;
+
 export function fill(template: string, values: Record<string, string>): string {
   let out = template;
   for (const [key, value] of Object.entries(values)) out = out.split("{" + key + "}").join(value);

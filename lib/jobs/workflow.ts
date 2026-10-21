@@ -15,7 +15,7 @@ export type WorkflowKey = (typeof WORKFLOW_KEYS)[number];
 export type Workflow = Record<WorkflowKey, boolean>;
 
 export const WORKFLOW_LABEL: Record<WorkflowKey, string> = {
-  skipResearch: "Deep research (paste the report yourself)",
+  skipResearch: "Research (paste the report yourself)",
   skipAnalysis: "Analysis (write the image prompt yourself)",
   skipImage: "Image generation (upload the picture yourself)",
   skipVerify: "Image check",

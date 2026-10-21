@@ -66,6 +66,12 @@ export const gemini: Providers["gemini"] = {
   analyzeCarousel: async () => {
     throw new Error("The Gemini HTTP bridge does not plan carousels yet. Use GEMINI_MCP_URL.");
   },
+  search: async () => {
+    throw new Error("The Gemini HTTP bridge does not search yet. Use GEMINI_MCP_URL.");
+  },
+  confirm: async () => {
+    throw new Error("The Gemini HTTP bridge does not check facts yet. Use GEMINI_MCP_URL.");
+  },
   caption: async () => {
     throw new Error("The Gemini HTTP bridge does not write captions yet. Use GEMINI_MCP_URL.");
   },

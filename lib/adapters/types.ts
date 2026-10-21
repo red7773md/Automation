@@ -51,6 +51,12 @@ export type AccountModel = { name: string; displayName: string; available: boole
 /** The account's models as the Gemini server last saw them. `message` says why there are none. */
 export type AccountModels = { models: AccountModel[]; verifiedAt: string | null; message?: string };
 
+/** One fact from a quick web search, with the page it came from. */
+export type SearchPoint = { claim: string; url: string; title: string };
+export type QuickSearch = { summary: string; points: SearchPoint[] };
+/** A fact after it was checked against the text of its page. */
+export type ConfirmedPoint = SearchPoint & { supported: boolean; reason?: string };
+
 export type Providers = {
   mode: "mock" | "live";
   gemini: {
@@ -62,6 +68,13 @@ export type Providers = {
     pollResearch(ref: string): Promise<ResearchPoll>;
     analyze(args: { topic: string; report: string; model?: string }): Promise<Analysis>;
     analyzeCarousel(args: { topic: string; report: string; slideCount: number; model?: string }): Promise<CarouselPlan>;
+    search(args: { topic: string; model?: string }): Promise<QuickSearch>; // quick research: facts found on the web, with their pages
+    confirm(args: {
+      topic: string;
+      points: SearchPoint[];
+      sources: { url: string; title: string; text: string }[];
+      model?: string;
+    }): Promise<ConfirmedPoint[]>; // each fact checked against the text of its page
     caption(args: { topic: string; analysis: string; model?: string }): Promise<Caption>;
     verifyImage(args: {
       topic: string;

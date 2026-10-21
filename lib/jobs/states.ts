@@ -1,5 +1,5 @@
 // Pure constants and types. Imported by both server and browser code.
-import type { CarouselPlan, Plan, Verdict } from "@/lib/adapters/types";
+import type { CarouselPlan, ConfirmedPoint, Plan, QuickSearch, Verdict } from "@/lib/adapters/types";
 import type { ManualInputs, Workflow } from "./workflow";
 
 export const STATES = [
@@ -18,7 +18,7 @@ export type State = (typeof STATES)[number];
 
 export const STATE_LABEL: Record<State, string> = {
   queued: "Waiting to start",
-  researching: "Deep research (Gemini)",
+  researching: "Research (Gemini)",
   analyzing: "Analysis in a new Gemini chat",
   generating: "Image (Gemini)",
   verifying: "Image check (Gemini)",
@@ -71,6 +71,19 @@ export type SlideImage = {
 /** What the next try of one slide should change: the problems found, and possibly a new prompt. */
 export type SlideFix = { index: number; notes: string[]; imagePrompt?: string };
 
+/** Deep research (slow, thorough) or a quick search whose facts are checked against their pages. */
+export type ResearchStyle = "deep" | "quick";
+
+/** A page the quick search cites, after it was opened. */
+export type SourceRecord = { url: string; title: string; ok: boolean; error?: string };
+
+export type QuickData = {
+  search?: QuickSearch; // the facts found on the web
+  sources?: SourceRecord[]; // every page that was opened, and whether it could be read
+  confirmed?: ConfirmedPoint[]; // every fact, with the checker's verdict
+  cited?: { url: string; title: string }[]; // the sources kept for the post, put in the pinned comment
+};
+
 export type PublishProgress = { mediaId?: string; commentId?: string; pinned?: boolean; dryRun?: boolean };
 
 export type JobData = {
@@ -100,6 +113,8 @@ export type JobData = {
   slideImages?: SlideImage[]; // carousel: one entry per slide, in order, as far as they have been made
   slideIndex?: number; // carousel: the slide being made or checked now
   slideFix?: SlideFix | null; // carousel: what to change the next time this slide is made
+  research?: ResearchStyle; // a missing style means deep research
+  quick?: QuickData; // quick research: the search, the page checks and what was kept
 };
 
 export type JobRow = {

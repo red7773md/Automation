@@ -5,8 +5,19 @@
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { parseCarouselPlan } from "@/lib/jobs/carousel";
+import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
-import { ANALYZE_PROMPT, CAPTION_PROMPT, CAROUSEL_PROMPT, REPORT_ATTACHED, REPORT_FILE, VERIFY_PROMPT, fill } from "./prompts";
+import {
+  ANALYZE_PROMPT,
+  CAPTION_PROMPT,
+  CAROUSEL_PROMPT,
+  CONFIRM_PROMPT,
+  REPORT_ATTACHED,
+  REPORT_FILE,
+  SEARCH_PROMPT,
+  VERIFY_PROMPT,
+  fill,
+} from "./prompts";
 import type { AccountModel, AccountModels, Analysis, Caption, CarouselPlan, Health, Providers, ResearchPoll, Verdict } from "./types";
 
 export type Op = "startResearch" | "pollResearch" | "analyze" | "caption" | "verifyImage" | "generateImage";
@@ -345,6 +356,22 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           cookie,
         );
         return parseCarouselPlan(res.text, slideCount);
+      }),
+    search: ({ topic, model }) =>
+      r.run("analyze", async (client, route, cookie) => {
+        const res = await r.call(client, route, { prompt: fill(SEARCH_PROMPT, { topic }), model }, cookie);
+        return parseSearchReply(res.text);
+      }),
+    confirm: ({ topic, points, sources, model }) =>
+      r.run("analyze", async (client, route, cookie) => {
+        // The page texts are filled in last, so no page text is read as a placeholder.
+        const prompt = fill(CONFIRM_PROMPT, {
+          topic,
+          points: JSON.stringify(points, null, 1),
+          sources: sources.map((s) => `SOURCE ${s.url}\nTitle: ${s.title}\n---\n${s.text}`).join("\n\n====\n\n"),
+        });
+        const res = await r.call(client, route, { prompt, model }, cookie);
+        return parseConfirmReply(res.text, points);
       }),
     caption: ({ topic, analysis, model }) =>
       r.run("caption", async (client, route, cookie): Promise<Caption> => {
