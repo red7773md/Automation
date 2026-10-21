@@ -13,6 +13,8 @@ import { defaultModels, type ModelSettings } from "@/lib/settings";
 import { normalizeWorkflow, type Workflow } from "./workflow";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
 import { analyzeCarousel, generateSlide, verifySlide } from "./carousel-steps";
+import { quickResearch } from "./quick-steps";
+import { withSources } from "./quick";
 
 const kb = (bytes: number) => (bytes / 1024).toFixed(0);
 
@@ -77,10 +79,12 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
           note: `Report supplied by you (${text.length.toLocaleString()} characters), saved as ${REPORT_FILE}. Research skipped.`,
         };
       }
-      return { state: "researching", note: `Started (mode: ${p.mode})` };
+      const style = d.research === "quick" ? "quick search and check" : "deep research";
+      return { state: "researching", note: `Started: ${style} (mode: ${p.mode})` };
     }
 
     case "researching": {
+      if (d.research === "quick") return quickResearch(job, models);
       if (!d.researchRef) {
         const { ref } = await p.gemini.startResearch(job.topic, models.research);
         return {
@@ -233,6 +237,8 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
         const c = await p.gemini.caption({ topic: job.topic, analysis: d.analysis, model: models.caption });
         plan = normalizePlan({ ...c, imagePrompt: d.imagePrompt });
       }
+      // A quick research job puts its sources at the end of the pinned comment, so readers can check the facts.
+      if (d.quick?.cited?.length) plan = { ...plan, commentBody: withSources(plan.commentBody, d.quick.cited) };
       // A failed check twice still stops for you, even with approval skipped.
       const post = (wf.skipApproval || d.autoPost === true) && d.verdict?.pass === true;
       return {

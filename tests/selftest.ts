@@ -946,6 +946,27 @@ async function main() {
   await quickFake.close();
   ok("Gemini quick research: search returns facts with web addresses; the check sends the page text and reads the verdict");
 
+  // ---------- quick research steps in mock mode ----------
+  const quickJob = (state: string, data: Record<string, unknown>) => jobWith(state, { research: "quick", ...data });
+  const searched = await runStep(quickJob("researching", {}));
+  assert.equal(searched.state, "researching");
+  assert.equal(searched.pending, true, "the search step waits for the next step to check the pages");
+  assert.equal((searched.data?.quick as any).search.points.length, 3);
+  ok("quick research: the first step searches and keeps the facts with their pages");
+
+  const captioned = await runStep(
+    quickJob("captioning", {
+      analysis: "Mock analysis",
+      imagePrompt: "a cup",
+      verdict: { pass: true, issues: [] },
+      quick: { cited: [{ url: "https://example.com/mock-1", title: "Mock source 1" }] },
+    }),
+  );
+  const commentBody = (captioned.data?.plan as any).commentBody as string;
+  assert.ok(commentBody.includes("Sources, checked before posting:") && commentBody.includes("https://example.com/mock-1"), commentBody);
+  assert.equal(captioned.state, "awaiting_review");
+  ok("quick research: the checked sources are added to the pinned comment that you approve");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.
