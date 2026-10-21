@@ -25,20 +25,89 @@ function isWebAddress(s: string): boolean {
   }
 }
 
+const CLAIM_KEYS = ["claim", "fact", "statement", "text", "point"];
+const URL_KEYS = ["url", "link", "href", "source_url", "sourceUrl", "source"];
+const LIST_KEYS = ["points", "facts", "findings", "items", "results"];
+const URL_IN_TEXT = /https?:\/\/[^\s)\]"'<>]+/g;
+
+function firstText(r: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** A web address from the item's own keys, or from a list of sources. Anything else is not an address. */
+function firstWebUrl(r: Record<string, unknown>): string {
+  for (const k of URL_KEYS) {
+    const v = r[k];
+    if (typeof v === "string" && isWebAddress(v.trim())) return v.trim();
+  }
+  if (Array.isArray(r.sources)) {
+    for (const s of r.sources) {
+      const u = typeof s === "string" ? s.trim() : s && typeof s === "object" ? firstText(s as Record<string, unknown>, URL_KEYS) : "";
+      if (isWebAddress(u)) return u;
+    }
+  }
+  return "";
+}
+
+function pointsFromJson(d: Record<string, any>): SearchPoint[] {
+  const list = LIST_KEYS.map((k) => d[k]).find(Array.isArray) ?? [];
+  const out: SearchPoint[] = [];
+  for (const item of list as unknown[]) {
+    const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const claim = firstText(r, CLAIM_KEYS);
+    const url = firstWebUrl(r);
+    if (claim && url) out.push({ claim, url, title: firstText(r, ["title", "name", "source_title"]) || url });
+  }
+  return out;
+}
+
+/** When the reply is prose: a line with a web address gives a fact, its address is the source. */
+function pointsFromText(text: string): SearchPoint[] {
+  const out: SearchPoint[] = [];
+  for (const line of text.split("\n")) {
+    const urls = line.match(URL_IN_TEXT);
+    if (!urls) continue;
+    const claim = line
+      .replace(URL_IN_TEXT, " ")
+      .replace(/[*_`#>|[\]()"{}]+/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^[-•\d.)\s]+/, "")
+      .trim();
+    if (claim.length < 15) continue;
+    const url = urls[0].replace(/[.,;:]+$/, "");
+    let host = url;
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      /* keep the address as the title */
+    }
+    out.push({ claim: claim.slice(0, 300), url, title: host });
+  }
+  return out;
+}
+
 /** Reads the search reply. A fact without a web address is dropped: it could not be checked. */
 export function parseSearchReply(text: string): QuickSearch {
-  const d = extractJson(text);
-  const items: unknown[] = Array.isArray(d.points) ? d.points : [];
-  const points: SearchPoint[] = [];
-  for (const item of items) {
-    const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
-    const claim = String(r.claim ?? "").trim();
-    const url = String(r.url ?? "").trim();
-    if (!claim || !isWebAddress(url)) continue;
-    points.push({ claim: claim.slice(0, 300), url, title: String(r.title ?? "").trim().slice(0, 160) || url });
-    if (points.length === QUICK_MAX_POINTS) break;
+  let d: Record<string, any> = {};
+  try {
+    d = extractJson(text) as Record<string, any>;
+  } catch {
+    d = {}; // not JSON: the facts may still be in the text
   }
-  if (!points.length) throw new Error("The search gave no facts with web addresses. Retry the research, or use deep research.");
+  let points = pointsFromJson(d);
+  if (!points.length) points = pointsFromText(text);
+  points = points.slice(0, QUICK_MAX_POINTS);
+  if (!points.length) {
+    // The start of the reply is shown, so the cause can be seen without a log.
+    const sample = text.replace(/\s+/g, " ").trim().slice(0, 300) || "(empty reply)";
+    throw new Error(
+      `The search gave no facts with web addresses. Gemini replied: "${sample}". Retry the job, or use deep research.`,
+    );
+  }
   return { summary: String(d.summary ?? "").trim().slice(0, 600), points };
 }
 

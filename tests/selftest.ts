@@ -875,6 +875,26 @@ async function main() {
   assert.throws(() => parseSearchReply('{"points":[]}'), /no facts with web addresses/);
   ok("search reply: facts without a web address are dropped; a missing title falls back to the address");
 
+  const otherKeys = parseSearchReply(
+    JSON.stringify({ facts: [{ fact: "Coffee contains caffeine", source: "https://c.example/p" }] }),
+  );
+  assert.equal(otherKeys.points.length, 1, "other key names for facts and addresses are read");
+  const sourceList = parseSearchReply(
+    JSON.stringify({ points: [{ claim: "Tea has less caffeine than coffee", sources: [{ url: "https://t.example/q" }] }] }),
+  );
+  assert.equal(sourceList.points[0].url, "https://t.example/q", "an address from a list of sources is used");
+  const prose = parseSearchReply(
+    "Here is what I found.\n- RAG combines retrieval with generation (https://en.example/rag).\nThanks.",
+  );
+  assert.equal(prose.points.length, 1, "a line with a web address in plain text gives a fact");
+  assert.equal(prose.points[0].url, "https://en.example/rag");
+  assert.throws(
+    () => parseSearchReply("I cannot browse the web right now."),
+    /Gemini replied: "I cannot browse the web right now\."/,
+    "the error shows what Gemini replied",
+  );
+  ok("search reply: other key names, lists of sources and plain text with addresses are read; a failure shows the reply");
+
   const checked = parseConfirmReply(
     JSON.stringify({
       checks: [
