@@ -70,11 +70,11 @@ Return ONLY a JSON object:
 {"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt that fixes the problems (only when pass is false, otherwise an empty string)"}
 Do not write anything outside the JSON.`;
 
-export const SEARCH_PROMPT = `Search the web now for reliable, recent information about the topic below. Use only pages you actually found in that search.
+export const SEARCH_PROMPT = `Give correct, well-established facts about the topic below, each with a source that states it.
 Return ONLY a JSON object with exactly these keys:
-- "summary": two or three sentences on what the sources agree on.
-- "points": up to 8 objects. Each has "claim" (one specific fact in one sentence, no opinion), "url" (the full address of the page the fact comes from, starting with https://) and "title" (the page's title).
-Prefer official, academic, government and major news sources. Do not invent sources or addresses. If you cannot find a source for a fact, leave that fact out.
+- "summary": two or three sentences on the topic.
+- "points": 6 to 8 objects. Each has "claim" (one specific, verifiable fact in one sentence, no opinion), "url" (the full https address of a real page that states this fact) and "title" (the page's title).
+Source rules: prefer the most stable pages, such as Wikipedia articles, official documentation, university or government pages, and arXiv or DOI paper pages. Only include a fact when you are confident it is true and that page states it. Never invent an address. If you are not sure of the address for a fact, leave that fact out.
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
 
 Topic: {topic}

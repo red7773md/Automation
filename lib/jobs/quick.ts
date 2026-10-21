@@ -5,7 +5,7 @@ import type { ConfirmedPoint, QuickSearch, SearchPoint } from "@/lib/adapters/ty
 import type { ResearchStyle } from "./states";
 
 export const QUICK_MAX_POINTS = 8;
-export const QUICK_MAX_SOURCES = 5; // pages opened per job
+export const QUICK_MAX_SOURCES = 6; // pages opened per job
 export const QUICK_SOURCE_CHARS = 8000; // text of each page sent to the checker
 const PINNED_LIMIT = 2200; // Instagram comment limit
 
