@@ -30,6 +30,28 @@ export async function shrinkForSending(input: Buffer): Promise<Shrunk> {
   return { bytes: out.data, contentType: "image/jpeg", width: out.info.width, height: out.info.height };
 }
 
+/**
+ * Makes a carousel slide square, exactly MAX_SIDE by MAX_SIDE. The generator can return landscape or portrait
+ * pictures. This keeps the middle square and trims 7% from each side, which also cuts off a mark in a corner.
+ */
+export async function squareForInstagram(input: Buffer): Promise<Buffer> {
+  let meta;
+  try {
+    meta = await sharp(input, { failOn: "error" }).metadata();
+  } catch (err) {
+    throw new Error(`The generated image could not be read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const w = meta.width ?? 0;
+  const h = meta.height ?? 0;
+  if (w < 2 || h < 2) throw new Error("The generated image has no usable size");
+  const side = Math.floor(Math.min(w, h) * 0.86);
+  return sharp(input, { failOn: "error" })
+    .extract({ left: Math.floor((w - side) / 2), top: Math.floor((h - side) / 2), width: side, height: side })
+    .resize({ width: MAX_SIDE, height: MAX_SIDE })
+    .png()
+    .toBuffer();
+}
+
 /** The picture type from its first bytes: PNG, JPEG, WEBP or GIF. Null for anything else. */
 export function sniffImage(bytes: Buffer): string | null {
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";

@@ -967,6 +967,52 @@ async function main() {
   assert.equal(captioned.state, "awaiting_review");
   ok("quick research: the checked sources are added to the pinned comment that you approve");
 
+  // ---------- carousel pictures: square, no logo, rules in every request ----------
+  const carouselMod = await import("@/lib/jobs/carousel");
+  const imagesMod = await import("@/lib/images");
+  const sharpLib = (await import("sharp")).default;
+  const oneSlide = { role: "point" as const, headline: "Sleep", body: "", imagePrompt: "a cup of tea" };
+  for (const text of [
+    carouselMod.slidePrompt("Flat style", oneSlide, { index: 1, total: 3 }),
+    carouselMod.slidePrompt("Flat style", oneSlide, { index: 1, total: 3 }, ["the picture is landscape"]),
+  ]) {
+    assert.match(text, /exactly 1:1/, "every request states the square format");
+    assert.match(text, /NO LOGO/, "every request forbids logos and marks");
+    assert.match(text, /Never landscape, never portrait/);
+  }
+  ok("every slide request carries the square format and the no-logo rule, including fixes");
+
+  const wide = await sharpLib({ create: { width: 1600, height: 900, channels: 3, background: { r: 200, g: 120, b: 60 } } }).png().toBuffer();
+  const tall = await sharpLib({ create: { width: 900, height: 1600, channels: 3, background: { r: 60, g: 120, b: 200 } } }).png().toBuffer();
+  for (const picture of [wide, tall]) {
+    const squared = await imagesMod.squareForInstagram(picture);
+    const meta = await sharpLib(squared).metadata();
+    assert.equal(meta.width, 1080);
+    assert.equal(meta.height, 1080);
+  }
+  ok("landscape and portrait pictures are cropped to a 1080 by 1080 square");
+
+  const squareFake = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_analyze_image",
+        description: "Look at a picture and check it against a prompt.",
+        inputSchema: { properties: { prompt: { type: "string" }, image: { type: "string" } }, required: ["prompt", "image"] },
+        handle: () => ({ text: '{"pass": true, "issues": []}' }),
+      },
+    ],
+  });
+  const squareGemini = createGemini({ url: () => squareFake.url, toolMap: () => undefined, cookie: async () => null });
+  const picture = Buffer.from("fake");
+  await squareGemini.verifyImage({ topic: "tea", imagePrompt: "a cup", image: picture, mimeType: "image/jpeg", attempt: 1, square: true, expectedText: "Sleep" });
+  const sent = String(squareFake.calls.at(-1)!.args.prompt);
+  assert.match(sent, /6\. The picture must be square/);
+  assert.match(sent, /7\. The image must show this text exactly as written: "Sleep"/);
+  await squareGemini.verifyImage({ topic: "tea", imagePrompt: "a cup", image: picture, mimeType: "image/jpeg", attempt: 1 });
+  assert.doesNotMatch(String(squareFake.calls.at(-1)!.args.prompt), /must be square/, "single posts are not held to the square rule");
+  await squareFake.close();
+  ok("picture check: carousel slides must be square and show their headline; single posts get neither rule");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.

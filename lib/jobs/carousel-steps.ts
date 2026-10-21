@@ -4,7 +4,7 @@
 import { providers } from "@/lib/adapters";
 import type { CarouselPlan, Verdict } from "@/lib/adapters/types";
 import { draftPath, readDraft, saveDraft } from "@/lib/blob";
-import { shrinkForSending } from "@/lib/images";
+import { shrinkForSending, squareForInstagram } from "@/lib/images";
 import type { ModelSettings } from "@/lib/settings";
 import { CAROUSEL_DEFAULT, CAROUSEL_TRIES, carouselVerdict, expectedText, slidePrompt, slidesFromLines } from "./carousel";
 import type { JobRow, SlideImage } from "./states";
@@ -77,7 +77,8 @@ export async function generateSlide(job: JobRow, models: ModelSettings): Promise
       ? await p.chatgpt.generateImage(prompt)
       : await p.gemini.generateImage(prompt, models.image);
   const attempt = job.attempts + 1;
-  const shrunk = await shrinkForSending(image.bytes);
+  // Square first, so every slide is 1080 by 1080 whatever shape the generator returned.
+  const shrunk = await shrinkForSending(await squareForInstagram(image.bytes));
   const path = await saveDraft(draftPath(job.id, attempt, i), shrunk.bytes, shrunk.contentType);
 
   const images: SlideImage[] = [...(d.slideImages ?? [])];
@@ -118,6 +119,7 @@ export async function verifySlide(job: JobRow, wf: Workflow, models: ModelSettin
     attempt: job.attempts,
     model: models.verify,
     expectedText: expectedText(slide),
+    square: true, // a carousel slide is square: a landscape or portrait picture fails the check
   });
   images[i] = { ...img, pass: verdict.pass, issues: verdict.issues };
   return afterCheck(i, total, img, verdict, images, wf);

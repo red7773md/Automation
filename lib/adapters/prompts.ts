@@ -63,7 +63,7 @@ Check the attached image for:
 1. It matches the topic and the prompt.
 2. No garbled, misspelled or unreadable text.
 3. No distorted faces, hands or extra limbs.
-4. No watermarks, logos or brand names.
+4. No logo, brand mark, watermark, signature, handle or website address anywhere in the picture, even small or in a corner. Fail the check if one appears.
 5. It looks clean and suitable for Instagram.
 {extra}
 Return ONLY a JSON object:

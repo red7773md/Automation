@@ -60,9 +60,23 @@ export function slidesFromLines(text: string, max: number): Slide[] {
   return lines.map((imagePrompt, i): Slide => ({ role: i === 0 ? "hook" : "point", headline: "", body: "", imagePrompt }));
 }
 
-/** The prompt for one slide. Every slide gets the same style, so the set reads as one post. */
+/**
+ * Sent with every slide's picture request, so each request is complete on its own: the generator does not
+ * keep anything from the slide before. Instagram carousel slides are square (1:1), and the picture must
+ * have no logo, mark or watermark.
+ */
+export const IMAGE_RULES = [
+  "FORMAT: one square picture, exactly 1:1 (Instagram carousel slide, 1080 by 1080 pixels). Never landscape, never portrait.",
+  "Fill the whole square edge to edge: no border, no frame, no white or coloured margin, no device frame.",
+  "NO LOGO: no logo, brand mark, company or app name, icon badge, sparkle or AI badge, watermark, signature, username, handle or website address anywhere in the picture, including the corners.",
+  "Keep the subject and any text at least 10% away from every edge, so nothing is cut off if the picture is trimmed.",
+  "Text: only the words given for this slide may appear in the picture. Add no other words, letters or numbers.",
+].join("\n");
+
+/** The prompt for one slide. Every slide gets the same rules and style, so the set reads as one post. */
 export function slidePrompt(style: string, slide: Slide, position: { index: number; total: number }, notes: string[] = []): string {
   return [
+    IMAGE_RULES,
     style ? `Style for every slide of this carousel: ${style}` : "",
     `Slide ${position.index + 1} of ${position.total}.`,
     slide.headline ? `Show this text exactly as written, large and easy to read: "${slide.headline}".` : "",

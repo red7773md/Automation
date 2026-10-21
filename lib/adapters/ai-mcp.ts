@@ -379,12 +379,21 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
         const d = extractJson(res.text);
         return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? "") };
       }),
-    verifyImage: ({ topic, imagePrompt, image, model, expectedText }) =>
+    verifyImage: ({ topic, imagePrompt, image, model, expectedText, square }) =>
       r.run("verifyImage", async (client, route, cookie) => {
-        // A carousel slide with a headline must show it exactly. The check is added as item 6 only for those slides.
-        const extra = expectedText
-          ? `6. The image must show this text exactly as written: "${expectedText}". Fail the check if it is missing, misspelled or hard to read.`
-          : "";
+        // Extra checks are numbered after the five standard ones. Single posts get none of them.
+        const extraLines: string[] = [];
+        if (square) {
+          extraLines.push(
+            `${6 + extraLines.length}. The picture must be square (1:1) with no border or margin. Fail the check if it is landscape or portrait.`,
+          );
+        }
+        if (expectedText) {
+          extraLines.push(
+            `${6 + extraLines.length}. The image must show this text exactly as written: "${expectedText}". Fail the check if it is missing, misspelled or hard to read.`,
+          );
+        }
+        const extra = extraLines.join("\n");
         const res = await r.call(
           client,
           route,

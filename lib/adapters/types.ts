@@ -84,6 +84,7 @@ export type Providers = {
       mimeType: string;
       attempt: number;
       expectedText?: string; // the headline the picture must show, when the slide has one
+      square?: boolean; // a carousel slide: the picture must be square, with no logo or mark
     }): Promise<Verdict>;
     generateImage(prompt: string, model?: string): Promise<{ bytes: Buffer; mimeType: string }>;
   };
