@@ -704,6 +704,10 @@ async function main() {
     const sent = askFake.calls.at(-1)!;
     assert.ok(String(sent.args.prompt).includes("Topic: coffee"));
     assert.ok(String(sent.args.prompt).includes("at most 8"), "the prompt carries the chosen slide count");
+    assert.ok(String(sent.args.prompt).includes("exactly 1:1"), "the prompt carries the picture rules");
+    assert.ok(String(sent.args.prompt).includes("NO LOGO"), "the prompt forbids logos before any prompt is written");
+    assert.ok(String(sent.args.prompt).includes("under 400 characters"), "the prompt states the length limit");
+    assert.ok(String(sent.args.prompt).includes("1000 characters"), "the prompt states the tool's limit");
     assert.deepEqual(sent.args.attachments, [{ name: "research-report.md", content_base64: Buffer.from("# Coffee report\n\nFacts.").toString("base64") }]);
     assert.equal((await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3 })).slides.length, 3);
     ok("carousel analysis: the chosen count and the report file go to Gemini; the reply is cut to that count");

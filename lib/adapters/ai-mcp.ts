@@ -4,7 +4,7 @@
 // (JSON, operation -> tool name) overrides it when it picks the wrong tool.
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
-import { IMAGE_PROMPT_LIMIT, parseCarouselPlan } from "@/lib/jobs/carousel";
+import { IMAGE_PROMPT_LIMIT, IMAGE_RULES, parseCarouselPlan } from "@/lib/jobs/carousel";
 import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
 import {
@@ -349,7 +349,13 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           route,
           {
             // report is filled last, so text inside the report is never mistaken for a placeholder.
-            prompt: fill(CAROUSEL_PROMPT, { topic, count: String(slideCount), report: attached ? REPORT_ATTACHED : report }),
+            // The picture rules and the length limit go in before the report, so the report text is never read as a placeholder.
+            prompt: fill(CAROUSEL_PROMPT, {
+              topic,
+              count: String(slideCount),
+              rules: IMAGE_RULES,
+              report: attached ? REPORT_ATTACHED : report,
+            }),
             model,
             attachments: attached ? [{ name: REPORT_FILE, content_base64: Buffer.from(report, "utf8").toString("base64") }] : undefined,
           },

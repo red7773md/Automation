@@ -38,7 +38,11 @@ Return ONLY a JSON object with exactly these keys:
   - "role": "hook" for the first slide, "cta" for the last slide, "point" for every other slide.
   - "headline": the short text shown large on the picture, at most 60 characters.
   - "body": one short line of supporting text, at most 120 characters. May be empty.
-  - "imagePrompt": a detailed prompt for an image generator that makes this slide's picture. Square composition. Describe only the picture. Do not write any text, letters or numbers in imagePrompt, because the headline and body are added as text. No real people's faces, logos or brand names.
+  - "imagePrompt": a prompt for an image generator that makes this slide's picture, under 400 characters. Describe only the picture: a square composition, with no logo, brand name, watermark or text, because the app adds the headline and body as text. No real people's faces.
+
+Picture rules. The app adds these rules to every slide's image request, so each imagePrompt must match them:
+{rules}
+Length limit: each imagePrompt must be under 400 characters. The image tool refuses any prompt over 1000 characters, and the app adds the rules and the slide's text to your imagePrompt. Keep it short and specific.
 
 Rules for the slides:
 - The first slide is the hook. Open a curiosity gap: a surprising fact, or a question the viewer wants answered. Give the brief point in the headline or body, but do not give the whole answer, so the viewer swipes to learn more.
@@ -67,7 +71,7 @@ Check the attached image for:
 5. It looks clean and suitable for Instagram.
 {extra}
 Return ONLY a JSON object:
-{"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt that fixes the problems (only when pass is false, otherwise an empty string)"}
+{"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt under 400 characters that fixes the problems, describes only the picture, and keeps it square with no logo, watermark or text (only when pass is false, otherwise an empty string)"}
 Do not write anything outside the JSON.`;
 
 export const SEARCH_PROMPT = `Give correct, well-established facts about the topic below, each with a source that states it.
