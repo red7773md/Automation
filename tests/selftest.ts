@@ -1006,9 +1006,23 @@ async function main() {
   ]) {
     assert.match(text, /exactly 1:1/, "every request states the square format");
     assert.match(text, /NO LOGO/, "every request forbids logos and marks");
-    assert.match(text, /Never landscape, never portrait/);
+    assert.match(text, /Never landscape or portrait/);
   }
   ok("every slide request carries the square format and the no-logo rule, including fixes");
+
+  const huge = carouselMod.slidePrompt(
+    "Style words ".repeat(200),
+    { role: "hook", headline: "H".repeat(400), body: "B".repeat(400), imagePrompt: "scene ".repeat(800) },
+    { index: 0, total: 8 },
+    ["fix ".repeat(300)],
+  );
+  assert.ok(huge.length <= carouselMod.IMAGE_PROMPT_LIMIT, `the prompt is ${huge.length} characters, over the limit`);
+  assert.match(huge, /exactly 1:1/, "the rules survive a long prompt");
+  assert.match(huge, /NO LOGO/);
+  assert.match(huge, /Swipe for more/, "the hook's swipe line survives a long prompt");
+  const shortOne = carouselMod.slidePrompt("", oneSlide, { index: 1, total: 3 });
+  assert.ok(shortOne.length < carouselMod.IMAGE_PROMPT_LIMIT);
+  ok(`a slide prompt stays within ${carouselMod.IMAGE_PROMPT_LIMIT} characters even with long text; the rules and headline are kept`);
 
   const wide = await sharpLib({ create: { width: 1600, height: 900, channels: 3, background: { r: 200, g: 120, b: 60 } } }).png().toBuffer();
   const tall = await sharpLib({ create: { width: 900, height: 1600, channels: 3, background: { r: 60, g: 120, b: 200 } } }).png().toBuffer();

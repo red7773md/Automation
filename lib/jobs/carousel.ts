@@ -60,33 +60,58 @@ export function slidesFromLines(text: string, max: number): Slide[] {
   return lines.map((imagePrompt, i): Slide => ({ role: i === 0 ? "hook" : "point", headline: "", body: "", imagePrompt }));
 }
 
+/** The Gemini image tool refuses a longer prompt ("Prompt is longer than 1000 characters"). */
+export const IMAGE_PROMPT_LIMIT = 1000;
+
 /**
- * Sent with every slide's picture request, so each request is complete on its own: the generator does not
- * keep anything from the slide before. Instagram carousel slides are square (1:1), and the picture must
- * have no logo, mark or watermark.
+ * Sent with every slide's picture request, so each request is complete on its own: the generator keeps nothing
+ * from the slide before. Kept short, because the whole prompt must fit IMAGE_PROMPT_LIMIT.
  */
 export const IMAGE_RULES = [
-  "FORMAT: one square picture, exactly 1:1 (Instagram carousel slide, 1080 by 1080 pixels). Never landscape, never portrait.",
-  "Fill the whole square edge to edge: no border, no frame, no white or coloured margin, no device frame.",
-  "NO LOGO: no logo, brand mark, company or app name, icon badge, sparkle or AI badge, watermark, signature, username, handle or website address anywhere in the picture, including the corners.",
-  "Keep the subject and any text at least 10% away from every edge, so nothing is cut off if the picture is trimmed.",
-  "Text: only the words given for this slide may appear in the picture. Add no other words, letters or numbers.",
+  "FORMAT: one square picture, exactly 1:1, 1080 by 1080 px, edge to edge, no border or margin. Never landscape or portrait.",
+  "NO LOGO: no logo, brand mark, watermark, badge, signature, handle or website anywhere, corners included.",
+  "Keep the subject and text 10% away from every edge. Only the words given for this slide may appear as text.",
 ].join("\n");
 
-/** The prompt for one slide. Every slide gets the same rules and style, so the set reads as one post. */
+/** Shortens text to at most `max` characters, at a word boundary where possible. */
+function cut(text: string, max: number): string {
+  if (max <= 0) return "";
+  if (text.length <= max) return text;
+  const head = text.slice(0, max - 1);
+  return `${head.replace(/\s+\S*$/, "")}…`;
+}
+
+/**
+ * The prompt for one slide. Every slide gets the same rules and style, so the set reads as one post.
+ * The rules, the headline and the slide's text are always kept. When the prompt would be too long, the
+ * scene description is shortened first, then the style, then the fixes.
+ */
 export function slidePrompt(style: string, slide: Slide, position: { index: number; total: number }, notes: string[] = []): string {
-  return [
+  const mandatory = [
     IMAGE_RULES,
-    style ? `Style for every slide of this carousel: ${style}` : "",
     `Slide ${position.index + 1} of ${position.total}.`,
-    slide.headline ? `Show this text exactly as written, large and easy to read: "${slide.headline}".` : "",
-    slide.body ? `Under it, a smaller line of text, exactly as written: "${slide.body}".` : "",
+    slide.headline ? `Show this text exactly as written, large and easy to read: "${cut(slide.headline, 200)}".` : "",
+    slide.body ? `Under it, a smaller line of text, exactly as written: "${cut(slide.body, 200)}".` : "",
     slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow in the bottom-right corner.` : "",
-    slide.imagePrompt,
-    notes.length ? `Fix these problems: ${notes.join(" ")}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+  let room = IMAGE_PROMPT_LIMIT - mandatory.length - 1;
+  const parts: string[] = [];
+  // Each optional part takes what is left, in order of importance.
+  const scene = cut(slide.imagePrompt, Math.min(room, 600));
+  if (scene) {
+    parts.push(scene);
+    room -= scene.length + 1;
+  }
+  const styleText = style ? cut(`Style for every slide of this carousel: ${style}`, Math.min(room, 200)) : "";
+  if (styleText) {
+    parts.push(styleText);
+    room -= styleText.length + 1;
+  }
+  const fixText = notes.length ? cut(`Fix these problems: ${notes.join(" ")}`, Math.min(room, 200)) : "";
+  if (fixText) parts.push(fixText);
+  return [mandatory, ...parts].join("\n");
 }
 
 /** The headline the picture must show, for the check. Slides written by hand have none. */

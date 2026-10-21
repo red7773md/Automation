@@ -4,7 +4,7 @@
 // (JSON, operation -> tool name) overrides it when it picks the wrong tool.
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
-import { parseCarouselPlan } from "@/lib/jobs/carousel";
+import { IMAGE_PROMPT_LIMIT, parseCarouselPlan } from "@/lib/jobs/carousel";
 import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
 import {
@@ -405,7 +405,9 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
       }),
     generateImage: (prompt, model) =>
       r.run("generateImage", async (client, route, cookie) => {
-        const res = await r.call(client, route, { prompt, model }, cookie);
+        // The image tool refuses longer prompts, so a long one is shortened here rather than failing the job.
+        const safe = prompt.length > IMAGE_PROMPT_LIMIT ? prompt.slice(0, IMAGE_PROMPT_LIMIT) : prompt;
+        const res = await r.call(client, route, { prompt: safe, model }, cookie);
         return extractImage(res);
       }),
   };
