@@ -111,24 +111,34 @@ export function parseSearchReply(text: string): QuickSearch {
   return { summary: String(d.summary ?? "").trim().slice(0, 600), points };
 }
 
-/** Reads the checker's reply. Only a yes counts as supported. The title comes from the search. */
+const YES = new Set(["true", "yes", "supported", "y", "1"]);
+
+/**
+ * Reads the checker's reply. Only a yes counts as supported. The claim, address and title come from the search:
+ * a check that gives the address in another form is matched by its claim, or else by its place in the list.
+ */
 export function parseConfirmReply(text: string, points: SearchPoint[]): ConfirmedPoint[] {
   const d = extractJson(text);
   const items: unknown[] = Array.isArray(d.checks) ? d.checks : [];
-  const titles = new Map(points.map((p) => [p.url, p.title]));
-  return items
-    .map((item): ConfirmedPoint => {
-      const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
-      const url = String(r.url ?? "");
-      return {
-        claim: String(r.claim ?? "").trim(),
-        url,
-        title: titles.get(url) ?? url,
-        supported: r.supported === true || String(r.supported).toLowerCase() === "true",
-        reason: String(r.reason ?? "").trim().slice(0, 200) || undefined,
-      };
-    })
-    .filter((c) => c.claim && c.url);
+  const byUrl = new Map(points.map((p) => [p.url, p]));
+  const byClaim = new Map(points.map((p) => [p.claim.trim().toLowerCase(), p]));
+  const out: ConfirmedPoint[] = [];
+  items.forEach((item, i) => {
+    const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const point =
+      byUrl.get(String(r.url ?? "").trim()) ??
+      byClaim.get(String(r.claim ?? "").trim().toLowerCase()) ??
+      points[i];
+    if (!point) return;
+    out.push({
+      claim: point.claim,
+      url: point.url,
+      title: point.title,
+      supported: r.supported === true || YES.has(String(r.supported).trim().toLowerCase()),
+      reason: String(r.reason ?? "").trim().slice(0, 200) || undefined,
+    });
+  });
+  return out;
 }
 
 /** The pages to open: each address once, in the order the search gave them. */

@@ -49,7 +49,15 @@ export async function quickResearch(job: JobRow, models: ModelSettings): Promise
   });
   const kept = keepConfirmed(confirmed, readable);
   if (!kept.length) {
-    throw new Error(`No fact could be confirmed in its source (${confirmed.length} checked). Retry the job, or use deep research.`);
+    // The checker's reasons are shown, so it is clear whether a fact was wrong or a source was not read.
+    const reasons = confirmed
+      .filter((c) => c.reason)
+      .slice(0, 3)
+      .map((c) => `"${c.claim.slice(0, 80)}": ${c.reason}`)
+      .join(" | ");
+    throw new Error(
+      `No fact could be confirmed in its source: ${confirmed.length} checked against ${readable.size} of ${urls.length} pages read. Checker said: ${reasons || "no reasons given"}. Retry the job, or use deep research.`,
+    );
   }
 
   // The report holds only checked facts. The analysis reads it like a deep research report.

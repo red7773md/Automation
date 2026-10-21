@@ -907,6 +907,14 @@ async function main() {
   assert.equal(checked[0].supported, true);
   assert.equal(checked[0].title, "Page A", "the title comes from the search, not from the checker");
   assert.equal(checked[1].supported, false, "only a yes counts as supported");
+  const yesWords = parseConfirmReply(
+    JSON.stringify({ checks: [{ claim: "Fact A", url: "https://a.example/x/", supported: "Yes", reason: "ok" }] }),
+    search.points,
+  );
+  assert.equal(yesWords[0].supported, true, "a yes written as 'Yes' counts");
+  assert.equal(yesWords[0].url, "https://a.example/x", "an altered address is matched by its claim");
+  assert.equal(yesWords[0].title, "Page A");
+  ok("fact check reply: 'Yes' counts as supported, and a check with an altered address is matched to its fact");
   const kept = keepConfirmed(
     [...checked, { claim: "Fact C", url: "https://c.example/z", title: "C", supported: true }],
     new Set(["https://a.example/x"]),
