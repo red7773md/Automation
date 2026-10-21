@@ -171,7 +171,14 @@ function makeRunner(provider: Provider, opts: McpOptions) {
     if (route.keys.attachments && values.attachments?.length) args[route.keys.attachments] = values.attachments;
     if (route.keys.cookie && cookie) args[route.keys.cookie] = cookie;
     const result = await client.call(route.tool, args);
-    if (result.isError) throw new Error(`${route.tool} returned an error: ${result.text.slice(0, 500)}`);
+    if (result.isError) {
+      const detail = result.text.trim().slice(0, 500);
+      throw new Error(
+        detail
+          ? `${route.tool} returned an error: ${detail}`
+          : `${route.tool} returned an error with no message. It is usually temporary: retry the job.`,
+      );
+    }
     return result;
   }
 

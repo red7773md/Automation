@@ -27,13 +27,13 @@ export function parseCarouselPlan(text: string, requested: number): CarouselPlan
   const slides: Slide[] = [];
   for (const item of list.slice(0, requested)) {
     const s = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
-    const imagePrompt = String(s.imagePrompt ?? "").trim();
+    const imagePrompt = cleanSlideText(String(s.imagePrompt ?? ""));
     if (!imagePrompt) throw new Error(`Slide ${slides.length + 1} has no image prompt. Retry the analysis.`);
     const role = ROLES.includes(s.role as (typeof ROLES)[number]) ? (s.role as Slide["role"]) : "point";
     slides.push({
       role: slides.length === 0 ? "hook" : role === "hook" ? "point" : role,
-      headline: String(s.headline ?? "").trim().slice(0, 200),
-      body: String(s.body ?? "").trim().slice(0, 300),
+      headline: cleanSlideText(String(s.headline ?? "")).slice(0, 200),
+      body: cleanSlideText(String(s.body ?? "")).slice(0, 300),
       imagePrompt,
     });
   }
@@ -64,6 +64,19 @@ export function slidesFromLines(text: string, max: number): Slide[] {
 export const IMAGE_PROMPT_LIMIT = 1000;
 
 /**
+ * Gemini sometimes leaves citation markers such as [cite: 1] or [2] in its text. They are not part of the
+ * slide, and an image would draw them, so they are removed wherever slide text is used.
+ */
+export function cleanSlideText(text: string | undefined): string {
+  return (text ?? "")
+    .replace(/\[cite[^\]]*\]/gi, "")
+    .replace(/\[\d+(?:[,\s]+\d+)*\]/g, "")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/**
  * Sent with every slide's picture request, so each request is complete on its own: the generator keeps nothing
  * from the slide before. Kept short, because the whole prompt must fit IMAGE_PROMPT_LIMIT.
  */
@@ -90,16 +103,17 @@ export function slidePrompt(style: string, slide: Slide, position: { index: numb
   const mandatory = [
     IMAGE_RULES,
     `Slide ${position.index + 1} of ${position.total}.`,
-    slide.headline ? `Show this text exactly as written, large and easy to read: "${cut(slide.headline, 200)}".` : "",
-    slide.body ? `Under it, a smaller line of text, exactly as written: "${cut(slide.body, 200)}".` : "",
-    slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow in the bottom-right corner.` : "",
+    slide.headline ? `Show this text exactly as written, large and easy to read: "${cut(cleanSlideText(slide.headline), 200)}".` : "",
+    slide.body ? `Under it, a smaller line of text, exactly as written: "${cut(cleanSlideText(slide.body), 200)}".` : "",
+    // Kept inside the safe margin: a corner is where a crop and the margin rule clip the text.
+    slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow, centred near the bottom edge and at least 10% above it.` : "",
   ]
     .filter(Boolean)
     .join("\n");
   let room = IMAGE_PROMPT_LIMIT - mandatory.length - 1;
   const parts: string[] = [];
   // Each optional part takes what is left, in order of importance.
-  const scene = cut(slide.imagePrompt, Math.min(room, 600));
+  const scene = cut(cleanSlideText(slide.imagePrompt), Math.min(room, 600));
   if (scene) {
     parts.push(scene);
     room -= scene.length + 1;
@@ -116,7 +130,7 @@ export function slidePrompt(style: string, slide: Slide, position: { index: numb
 
 /** The headline the picture must show, for the check. Slides written by hand have none. */
 export function expectedText(slide: Slide): string | undefined {
-  return slide.headline || undefined;
+  return cleanSlideText(slide.headline) || undefined;
 }
 
 /** One verdict for the whole carousel. Any slide that did not pass makes the set fail, and each issue names its slide. */

@@ -1059,6 +1059,40 @@ async function main() {
   await squareFake.close();
   ok("picture check: carousel slides must be square and show their headline; single posts get neither rule");
 
+  const citedPlan = carouselMod.parseCarouselPlan(
+    JSON.stringify({
+      analysis: "a",
+      styleGuide: "s",
+      slides: [
+        { role: "hook", headline: "Why AI makes things up?", body: "Retrieval helps[cite: 1].", imagePrompt: "a brain [1]." },
+        { role: "cta", headline: "Save this", body: "", imagePrompt: "a book" },
+      ],
+    }),
+    2,
+  );
+  assert.equal(citedPlan.slides[0].body, "Retrieval helps.");
+  assert.equal(citedPlan.slides[0].imagePrompt, "a brain.");
+  const citedPrompt = carouselMod.slidePrompt("", citedPlan.slides[0], { index: 0, total: 2 });
+  assert.ok(!citedPrompt.includes("[cite") && !citedPrompt.includes("[1]"), "citation markers never reach the picture");
+  assert.ok(!citedPrompt.includes("bottom-right"), "the swipe line is not placed in a corner");
+  assert.match(citedPrompt, /centred near the bottom edge/);
+  ok("slide text: citation markers are removed; the swipe line stays inside the safe margin");
+
+  const blankFake = await startFakeMcp({
+    tools: [
+      {
+        name: "gemini_generate_image",
+        description: "Generate an image from a prompt.",
+        inputSchema: { properties: { prompt: { type: "string" } }, required: ["prompt"] },
+        handle: () => ({ text: "", isError: true }),
+      },
+    ],
+  });
+  const blankGemini = createGemini({ url: () => blankFake.url, toolMap: () => undefined, cookie: async () => null });
+  await assert.rejects(() => blankGemini.generateImage("a cup", undefined), /error with no message/);
+  await blankFake.close();
+  ok("an image tool error with no message says so, and that it is usually temporary");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.
