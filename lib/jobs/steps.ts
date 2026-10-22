@@ -63,7 +63,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
   // A carousel has its own analysis, pictures and check. Research and the caption are shared with a single post.
   if ((d.format ?? "post") === "carousel") {
     if (job.state === "analyzing") return analyzeCarousel(job, wf, models);
-    if (job.state === "generating") return generateSlide(job, models);
+    if (job.state === "generating") return generateSlide(job, wf, models);
     if (job.state === "verifying") return verifySlide(job, wf, models);
   }
 

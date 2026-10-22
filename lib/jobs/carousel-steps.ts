@@ -58,7 +58,7 @@ export async function analyzeCarousel(job: JobRow, wf: Workflow, models: ModelSe
 }
 
 /** Makes the picture of the current slide. Each slide is one step, so a slow image never holds up the others. */
-export async function generateSlide(job: JobRow, models: ModelSettings): Promise<StepResult> {
+export async function generateSlide(job: JobRow, wf: Workflow, models: ModelSettings): Promise<StepResult> {
   const d = job.data;
   const plan = d.carousel;
   if (!plan) throw new Error("No carousel plan stored. Retry from the analysis step.");
@@ -72,10 +72,27 @@ export async function generateSlide(job: JobRow, models: ModelSettings): Promise
   const prompt = slidePrompt(plan.styleGuide, { ...slide, imagePrompt: fix?.imagePrompt || slide.imagePrompt }, { index: i, total: plan.slides.length }, notes);
 
   const p = providers();
-  const image =
-    process.env.IMAGE_PROVIDER === "chatgpt"
-      ? await p.chatgpt.generateImage(prompt)
-      : await p.gemini.generateImage(prompt, models.image);
+  let image: { bytes: Buffer };
+  try {
+    image =
+      process.env.IMAGE_PROVIDER === "chatgpt"
+        ? await p.chatgpt.generateImage(prompt)
+        : await p.gemini.generateImage(prompt, models.image);
+  } catch (err) {
+    // A correction the image tool cannot make does not fail the whole job. The slide keeps its earlier picture,
+    // which failed the check, and the set waits for your decision, as it does after two failed tries.
+    const earlier = (d.slideImages ?? [])[i];
+    if (!fix || !earlier) throw err;
+    const kept: SlideImage[] = [...(d.slideImages ?? [])];
+    const reason = err instanceof Error ? err.message : String(err);
+    return nextSlide(
+      i,
+      plan.slides.length,
+      kept,
+      wf,
+      `Slide ${i + 1} could not be made again (${reason.slice(0, 200)}). It keeps its earlier picture, which failed the check.`,
+    );
+  }
   const attempt = job.attempts + 1;
   // Square first, so every slide is 1080 by 1080 whatever shape the generator returned.
   const shrunk = await shrinkForSending(await squareForInstagram(image.bytes));
