@@ -21,7 +21,7 @@ export class McpClient {
     private readonly headers: Record<string, string>,
   ) {}
 
-  private async post(body: Record<string, unknown>): Promise<Response> {
+  private async post(body: Record<string, unknown>, timeoutMs = 120_000): Promise<Response> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
@@ -33,7 +33,7 @@ export class McpClient {
       headers,
       body: JSON.stringify(body),
       cache: "no-store",
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       const detail = (await res.text()).slice(0, 300);
@@ -69,9 +69,9 @@ export class McpClient {
     await (await this.post({ jsonrpc: "2.0", method: "notifications/initialized" })).text();
   }
 
-  private async rpc(method: string, params: Record<string, unknown> = {}): Promise<any> {
+  private async rpc(method: string, params: Record<string, unknown> = {}, timeoutMs = 120_000): Promise<any> {
     const id = this.nextId++;
-    const msg = await this.message(await this.post({ jsonrpc: "2.0", id, method, params }), id);
+    const msg = await this.message(await this.post({ jsonrpc: "2.0", id, method, params }, timeoutMs), id);
     if (msg?.error) throw new Error(`MCP ${method} failed: ${msg.error.message ?? JSON.stringify(msg.error)}`);
     return msg?.result;
   }
@@ -80,8 +80,8 @@ export class McpClient {
     return (await this.rpc("tools/list"))?.tools ?? [];
   }
 
-  async call(name: string, args: Record<string, unknown>): Promise<McpCallResult> {
-    const result = await this.rpc("tools/call", { name, arguments: args });
+  async call(name: string, args: Record<string, unknown>, timeoutMs = 120_000): Promise<McpCallResult> {
+    const result = await this.rpc("tools/call", { name, arguments: args }, timeoutMs);
     const blocks: Array<Record<string, any>> = result?.content ?? [];
     const text = blocks
       .filter((b) => b.type === "text")

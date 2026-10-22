@@ -158,7 +158,7 @@ function makeRunner(provider: Provider, opts: McpOptions) {
   async function call(
     client: McpClient,
     route: OpPlan,
-    values: { prompt?: string; ref?: string; image?: string; model?: string; attachments?: Attachment[] },
+    values: { prompt?: string; ref?: string; image?: string; model?: string; attachments?: Attachment[]; timeoutMs?: number },
     cookie: string,
   ): Promise<McpCallResult> {
     const args: Record<string, unknown> = {};
@@ -170,7 +170,7 @@ function makeRunner(provider: Provider, opts: McpOptions) {
     // Only sent when the tool takes attachments. Callers check route.keys.attachments before they build one.
     if (route.keys.attachments && values.attachments?.length) args[route.keys.attachments] = values.attachments;
     if (route.keys.cookie && cookie) args[route.keys.cookie] = cookie;
-    const result = await client.call(route.tool, args);
+    const result = await client.call(route.tool, args, values.timeoutMs);
     if (result.isError) {
       const detail = result.text.trim().slice(0, 500);
       throw new Error(
@@ -296,6 +296,9 @@ async function extractImage(result: McpCallResult): Promise<{ bytes: Buffer; mim
   throw new Error(`Could not find an image in the ChatGPT MCP reply: ${result.text.slice(0, 300)}`);
 }
 
+/** Image pictures can take longer than a text answer. The step has 300 seconds, so this leaves room for the rest. */
+const IMAGE_TIMEOUT_MS = 240_000;
+
 export function createGemini(opts: McpOptions): Providers["gemini"] {
   const r = makeRunner("gemini", opts);
   return {
@@ -420,7 +423,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
       r.run("generateImage", async (client, route, cookie) => {
         // The image tool refuses longer prompts, so a long one is shortened here rather than failing the job.
         const safe = prompt.length > IMAGE_PROMPT_LIMIT ? prompt.slice(0, IMAGE_PROMPT_LIMIT) : prompt;
-        const res = await r.call(client, route, { prompt: safe, model }, cookie);
+        const res = await r.call(client, route, { prompt: safe, model, timeoutMs: IMAGE_TIMEOUT_MS }, cookie);
         return extractImage(res);
       }),
   };
@@ -432,7 +435,7 @@ export function createChatGpt(opts: McpOptions): Providers["chatgpt"] {
     health: r.health,
     generateImage: (prompt) =>
       r.run("generateImage", async (client, route, cookie) => {
-        const res = await r.call(client, route, { prompt }, cookie);
+        const res = await r.call(client, route, { prompt, timeoutMs: IMAGE_TIMEOUT_MS }, cookie);
         return extractImage(res);
       }),
   };
