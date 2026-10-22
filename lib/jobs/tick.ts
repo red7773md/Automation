@@ -28,6 +28,7 @@ export async function tickOnce(): Promise<TickResult> {
     where busy = false
       and state not in ('awaiting_review', 'done', 'failed')
       and scheduled_at <= now()
+      and coalesce((data->>'retryAt')::timestamptz, now()) <= now()
     order by scheduled_at asc, created_at asc
     limit 1`;
   if (due.length === 0) return { ran: false, reason: "No job is due" };

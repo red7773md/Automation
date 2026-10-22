@@ -115,6 +115,8 @@ export type JobData = {
   slideFix?: SlideFix | null; // carousel: what to change the next time this slide is made
   research?: ResearchStyle; // a missing style means deep research
   quick?: QuickData; // quick research: the search, the page checks and what was kept
+  transientTries?: number; // temporary problems in a row for the current step; reset when a step succeeds
+  retryAt?: string | null; // when the job may be tried again after a temporary problem
 };
 
 export type JobRow = {

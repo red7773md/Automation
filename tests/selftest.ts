@@ -1093,6 +1093,31 @@ async function main() {
   await blankFake.close();
   ok("an image tool error with no message says so, and that it is usually temporary");
 
+  // ---------- temporary problems wait and are tried again ----------
+  const transient = await import("@/lib/jobs/transient");
+  for (const msg of [
+    "The operation was aborted due to timeout",
+    "gemini_generate_image returned an error with no message. It is usually temporary: retry the job.",
+    "gemini_generate_image returned an error: Error executing tool gemini_generate_image: ",
+    "HTTP 503 from the server",
+    "fetch failed",
+  ]) {
+    assert.equal(transient.isTransient(msg), true, `temporary: ${msg}`);
+  }
+  for (const msg of [
+    "gemini_generate_image returned an error: Prompt is longer than 1000 characters.",
+    "GEMINI_MCP_URL is not set",
+    "cookies are not set. Add them in Settings.",
+    "Gemini bridge rejected the request (HTTP 401). The cookies have probably expired.",
+    "No analysis stored. Retry from the analysis step.",
+    "Deep research did not finish within 45 minutes.",
+  ]) {
+    assert.equal(transient.isTransient(msg), false, `stops the job: ${msg}`);
+  }
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 12].map(transient.retryMinutes), [1, 2, 4, 8, 16, 32, 60, 60]);
+  assert.equal(transient.MAX_TRANSIENT_TRIES, 12);
+  ok("temporary problems are retried with waits of 1 to 60 minutes; permanent ones stop the job at once");
+
   // ---------- image size for the MCP servers ----------
   // A large PNG (the generator returned about 9 MB) must come back as a small JPEG,
   // or the Gemini MCP rejects the request with HTTP 413.
