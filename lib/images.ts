@@ -3,14 +3,18 @@
 // rejects with HTTP 413 when they are sent back as base64, and which Instagram
 // does not accept above 8 MB.
 import sharp, { type OutputInfo, type Sharp } from "sharp";
+import { sizeOf, type Shape } from "@/lib/jobs/design";
 
 export const MAX_SIDE = 1080; // Instagram square posts are 1080 px
 export const SEND_LIMIT = 900 * 1024; // what we send to the MCP servers, after base64 it stays under 1.3 MB
 
 export type Shrunk = { bytes: Buffer; contentType: "image/jpeg"; width: number; height: number };
 
-/** Resizes to fit MAX_SIDE and encodes as JPEG, lowering the quality until the file is under SEND_LIMIT. */
-export async function shrinkForSending(input: Buffer): Promise<Shrunk> {
+/**
+ * Resizes to fit the box (MAX_SIDE square by default, or a carousel frame such as 1080 by 1350) and encodes as
+ * JPEG, lowering the quality until the file is under SEND_LIMIT.
+ */
+export async function shrinkForSending(input: Buffer, box: { width: number; height: number } = { width: MAX_SIDE, height: MAX_SIDE }): Promise<Shrunk> {
   let image: Sharp;
   try {
     image = sharp(input, { failOn: "error" }).rotate();
@@ -22,7 +26,7 @@ export async function shrinkForSending(input: Buffer): Promise<Shrunk> {
   do {
     out = await image
       .clone()
-      .resize({ width: MAX_SIDE, height: MAX_SIDE, fit: "inside", withoutEnlargement: true })
+      .resize({ width: box.width, height: box.height, fit: "inside", withoutEnlargement: true })
       .jpeg({ quality, mozjpeg: true })
       .toBuffer({ resolveWithObject: true });
     quality -= 8;
@@ -31,25 +35,39 @@ export async function shrinkForSending(input: Buffer): Promise<Shrunk> {
 }
 
 /**
- * Makes a carousel slide square, exactly MAX_SIDE by MAX_SIDE. The generator can return landscape or portrait
- * pictures. This keeps the middle square and trims 7% from each side, which also cuts off a mark in a corner.
+ * The part of a w by h picture kept for a frame of the target's shape. The edges are trimmed first by `inset`
+ * of the shorter side, which also cuts off a mark in a corner, then the middle is taken at the frame's ratio.
  */
-export async function squareForInstagram(input: Buffer): Promise<Buffer> {
+export function coverBox(w: number, h: number, target: { width: number; height: number }, inset = 0.07) {
+  if (w < 2 || h < 2) throw new Error("The generated image has no usable size");
+  const trim = Math.floor(Math.min(w, h) * inset);
+  const cw = Math.max(1, w - 2 * trim);
+  const ch = Math.max(1, h - 2 * trim);
+  const ratio = target.width / target.height;
+  const width = cw / ch > ratio ? Math.max(1, Math.floor(ch * ratio)) : cw;
+  const height = cw / ch > ratio ? ch : Math.max(1, Math.floor(cw / ratio));
+  return {
+    left: trim + Math.floor((cw - width) / 2),
+    top: trim + Math.floor((ch - height) / 2),
+    width,
+    height,
+  };
+}
+
+/**
+ * Makes a carousel picture exactly the frame of its shape: 1080 by 1080 for a square, 1080 by 1350 for a portrait.
+ * The generator can return other shapes, so the middle is kept and resized. Returns PNG.
+ */
+export async function shapeForInstagram(input: Buffer, shape: Shape): Promise<Buffer> {
   let meta;
   try {
     meta = await sharp(input, { failOn: "error" }).metadata();
   } catch (err) {
     throw new Error(`The generated image could not be read: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const w = meta.width ?? 0;
-  const h = meta.height ?? 0;
-  if (w < 2 || h < 2) throw new Error("The generated image has no usable size");
-  const side = Math.floor(Math.min(w, h) * 0.86);
-  return sharp(input, { failOn: "error" })
-    .extract({ left: Math.floor((w - side) / 2), top: Math.floor((h - side) / 2), width: side, height: side })
-    .resize({ width: MAX_SIDE, height: MAX_SIDE })
-    .png()
-    .toBuffer();
+  const frame = sizeOf(shape);
+  const box = coverBox(meta.width ?? 0, meta.height ?? 0, frame);
+  return sharp(input, { failOn: "error" }).extract(box).resize({ width: frame.width, height: frame.height }).png().toBuffer();
 }
 
 /** The picture type from its first bytes: PNG, JPEG, WEBP or GIF. Null for anything else. */

@@ -2,6 +2,7 @@
 // overall check. Pure functions with no I/O, so the rules can be tested and the browser can import the limits.
 import { extractJson } from "@/lib/adapters/parse";
 import type { CarouselPlan, Slide, Verdict } from "@/lib/adapters/types";
+import { imageRules, type Shape } from "./design";
 import type { JobFormat, SlideImage } from "./states";
 import type { Workflow } from "./workflow";
 
@@ -9,6 +10,11 @@ export const CAROUSEL_MIN = 3;
 export const CAROUSEL_MAX = 10; // Instagram allows at most 10 pictures in one carousel
 export const CAROUSEL_DEFAULT = 8;
 export const CAROUSEL_TRIES = 2; // a slide is made at most twice: the first try and one correction
+
+// Safety limits on what the analysis returns. The prompt asks for less; these only stop a long reply from overflowing the slide.
+export const FIGURE_LIMIT = 16;
+export const HEADLINE_LIMIT = 90;
+export const BODY_LIMIT = 220;
 
 export function clampSlideCount(value: unknown): number {
   const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
@@ -30,10 +36,13 @@ export function parseCarouselPlan(text: string, requested: number): CarouselPlan
     const imagePrompt = cleanSlideText(String(s.imagePrompt ?? ""));
     if (!imagePrompt) throw new Error(`Slide ${slides.length + 1} has no image prompt. Retry the analysis.`);
     const role = ROLES.includes(s.role as (typeof ROLES)[number]) ? (s.role as Slide["role"]) : "point";
+    const isHook = slides.length === 0;
+    const figure = isHook ? cut(cleanSlideText(String(s.figure ?? "")), FIGURE_LIMIT) : "";
     slides.push({
-      role: slides.length === 0 ? "hook" : role === "hook" ? "point" : role,
-      headline: cleanSlideText(String(s.headline ?? "")).slice(0, 200),
-      body: cleanSlideText(String(s.body ?? "")).slice(0, 300),
+      role: isHook ? "hook" : role === "hook" ? "point" : role,
+      ...(figure ? { figure } : {}),
+      headline: cut(cleanSlideText(String(s.headline ?? "")), HEADLINE_LIMIT),
+      body: cut(cleanSlideText(String(s.body ?? "")), BODY_LIMIT),
       imagePrompt,
     });
   }
@@ -76,18 +85,8 @@ export function cleanSlideText(text: string | undefined): string {
     .trim();
 }
 
-/**
- * Sent with every slide's picture request, so each request is complete on its own: the generator keeps nothing
- * from the slide before. Kept short, because the whole prompt must fit IMAGE_PROMPT_LIMIT.
- */
-export const IMAGE_RULES = [
-  "FORMAT: one square picture, exactly 1:1, 1080 by 1080 px, edge to edge, no border or margin. Never landscape or portrait.",
-  "NO LOGO: no logo, brand mark, watermark, badge, signature, handle or website anywhere, corners included.",
-  "Keep the subject and text 10% away from every edge. Only the words given for this slide may appear as text.",
-].join("\n");
-
 /** Shortens text to at most `max` characters, at a word boundary where possible. */
-function cut(text: string, max: number): string {
+export function cut(text: string, max: number): string {
   if (max <= 0) return "";
   if (text.length <= max) return text;
   const head = text.slice(0, max - 1);
@@ -95,18 +94,22 @@ function cut(text: string, max: number): string {
 }
 
 /**
- * The prompt for one slide. Every slide gets the same rules and style, so the set reads as one post.
- * The rules, the headline and the slide's text are always kept. When the prompt would be too long, the
- * scene description is shortened first, then the style, then the fixes.
+ * The prompt for one slide. Every slide gets the same rules and style, so the set reads as one post. The
+ * picture carries no text: the app draws the slide's text over it. The rules, the slide's position and the
+ * scene are always kept; when the prompt would be too long, the scene is shortened first, then the style,
+ * then the fixes.
  */
-export function slidePrompt(style: string, slide: Slide, position: { index: number; total: number }, notes: string[] = []): string {
+export function slidePrompt(
+  style: string,
+  slide: Slide,
+  position: { index: number; total: number },
+  notes: string[] = [],
+  shape: Shape = "square",
+): string {
   const mandatory = [
-    IMAGE_RULES,
+    imageRules(shape),
     `Slide ${position.index + 1} of ${position.total}.`,
-    slide.headline ? `Show this text exactly as written, large and easy to read: "${cut(cleanSlideText(slide.headline), 200)}".` : "",
-    slide.body ? `Under it, a smaller line of text, exactly as written: "${cut(cleanSlideText(slide.body), 200)}".` : "",
-    // Kept inside the safe margin: a corner is where a crop and the margin rule clip the text.
-    slide.role === "hook" ? `Also show the words "Swipe for more" with a small arrow, centred near the bottom edge and at least 10% above it.` : "",
+    slide.role === "hook" ? "This is the first slide: a striking, simple picture that makes the viewer curious to swipe on." : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -126,11 +129,6 @@ export function slidePrompt(style: string, slide: Slide, position: { index: numb
   const fixText = notes.length ? cut(`Fix these problems: ${notes.join(" ")}`, Math.min(room, 200)) : "";
   if (fixText) parts.push(fixText);
   return [mandatory, ...parts].join("\n");
-}
-
-/** The headline the picture must show, for the check. Slides written by hand have none. */
-export function expectedText(slide: Slide): string | undefined {
-  return cleanSlideText(slide.headline) || undefined;
 }
 
 /** One verdict for the whole carousel. Any slide that did not pass makes the set fail, and each issue names its slide. */

@@ -75,13 +75,13 @@ export const gemini: Providers["gemini"] = {
   caption: async () => {
     throw new Error("The Gemini HTTP bridge does not write captions yet. Use GEMINI_MCP_URL.");
   },
-  verifyImage: async ({ topic, imagePrompt, image, mimeType, attempt, expectedText, square }) => {
+  verifyImage: async ({ topic, imagePrompt, image, mimeType, attempt, shape }) => {
     const v = await call<Partial<Verdict>>("gemini", "POST", "/verify", 150_000, {
       topic,
       imagePrompt,
       attempt,
-      expectedText, // optional: a bridge that ignores it simply checks the picture without the headline
-      square: square === true, // optional: a bridge that ignores it does not check the shape
+      shape, // optional: a carousel slide's shape ("square" or "portrait"); a bridge that ignores it does not check the shape
+      square: shape === "square", // kept for older bridges that only know the square rule
       image: { mimeType, base64: image.toString("base64") },
     });
     return {

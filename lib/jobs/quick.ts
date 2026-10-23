@@ -3,11 +3,12 @@
 import { extractJson } from "@/lib/adapters/parse";
 import type { ConfirmedPoint, QuickSearch, SearchPoint } from "@/lib/adapters/types";
 import type { ResearchStyle } from "./states";
+import { COMMENT_TOTAL_LIMIT } from "./comments";
 
 export const QUICK_MAX_POINTS = 8;
 export const QUICK_MAX_SOURCES = 6; // pages opened per job
 export const QUICK_SOURCE_CHARS = 8000; // text of each page sent to the checker
-const PINNED_LIMIT = 2200; // Instagram comment limit
+const PINNED_LIMIT = COMMENT_TOTAL_LIMIT; // the most text a description may hold: its numbered comments together
 
 /** Missing means deep research, which is what jobs did before this option existed. */
 export function parseResearchStyle(raw: unknown): ResearchStyle {

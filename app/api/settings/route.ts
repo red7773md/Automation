@@ -1,5 +1,6 @@
 import { adminRoute, json } from "@/lib/api";
 import { CAROUSEL_DEFAULT, CAROUSEL_MAX, CAROUSEL_MIN } from "@/lib/jobs/carousel";
+import { HANDLE_LIMIT } from "@/lib/jobs/design";
 import { WORKFLOW_HINT, WORKFLOW_KEYS, WORKFLOW_LABEL, normalizeWorkflow } from "@/lib/jobs/workflow";
 import {
   MODEL_PRESETS,
@@ -24,7 +25,7 @@ export const GET = adminRoute(async () => {
     workflow: await loadWorkflow(),
     workflowSwitches: WORKFLOW_KEYS.map((id) => ({ id, label: WORKFLOW_LABEL[id], hint: WORKFLOW_HINT[id] })),
     carousel: await loadCarousel(),
-    carouselLimits: { min: CAROUSEL_MIN, max: CAROUSEL_MAX, default: CAROUSEL_DEFAULT },
+    carouselLimits: { min: CAROUSEL_MIN, max: CAROUSEL_MAX, default: CAROUSEL_DEFAULT, handleMax: HANDLE_LIMIT },
   });
 });
 

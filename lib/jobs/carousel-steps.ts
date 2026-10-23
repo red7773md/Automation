@@ -1,12 +1,15 @@
 // The carousel branch of the pipeline. Research and the caption are shared with a single post. The
-// analysis, the pictures, their check and the publishing are the carousel's own: one picture per
-// slide, each checked before the next slide is made, then one album post.
+// analysis, the pictures, their check, the text drawn over each checked picture, and the publishing are the
+// carousel's own: one picture per slide, each checked before the next slide is made, then one album post.
 import { providers } from "@/lib/adapters";
 import type { CarouselPlan, Verdict } from "@/lib/adapters/types";
-import { draftPath, readDraft, saveDraft } from "@/lib/blob";
-import { shrinkForSending, squareForInstagram } from "@/lib/images";
+import { draftPath, finalDraftPath, readDraft, saveDraft } from "@/lib/blob";
+import { shapeForInstagram, shrinkForSending } from "@/lib/images";
+import { composeSlide } from "@/lib/overlay";
 import type { ModelSettings } from "@/lib/settings";
-import { CAROUSEL_DEFAULT, CAROUSEL_TRIES, carouselVerdict, expectedText, slidePrompt, slidesFromLines } from "./carousel";
+import { loadCarousel } from "@/lib/settings";
+import { CAROUSEL_DEFAULT, CAROUSEL_TRIES, carouselVerdict, slidePrompt, slidesFromLines } from "./carousel";
+import { DESIGN_DEFAULT, sizeOf, type SlideDesign } from "./design";
 import type { JobRow, SlideImage } from "./states";
 import type { StepResult } from "./steps";
 import type { Workflow } from "./workflow";
@@ -19,10 +22,18 @@ function summary(plan: CarouselPlan): string {
   return plan.slides.map((s, i) => `${i + 1}. ${s.imagePrompt}`).join("\n");
 }
 
+/** The look of the carousel as it is when the job starts. A job keeps this even if Settings change later. */
+async function designForJob(job: JobRow): Promise<SlideDesign> {
+  if (job.data.design) return job.data.design;
+  const { shape, handle, footer } = await loadCarousel();
+  return { shape, handle, footer };
+}
+
 export async function analyzeCarousel(job: JobRow, wf: Workflow, models: ModelSettings): Promise<StepResult> {
   const d = job.data;
   const count = d.slideCount ?? CAROUSEL_DEFAULT;
   const manual = d.manual ?? {};
+  const design = await designForJob(job);
   let plan: CarouselPlan;
   let note: string;
   if (wf.skipAnalysis) {
@@ -36,14 +47,15 @@ export async function analyzeCarousel(job: JobRow, wf: Workflow, models: ModelSe
     note = `Analysis skipped. Your ${slides.length} slide prompts are used.`;
   } else {
     if (!d.report) throw new Error("No research report stored. Retry from the research step.");
-    plan = await providers().gemini.analyzeCarousel({ topic: job.topic, report: d.report, slideCount: count, model: models.analysis });
-    note = `Carousel plan ready from a separate Gemini chat: ${plan.slides.length} slides (up to ${count} chosen)`;
+    plan = await providers().gemini.analyzeCarousel({ topic: job.topic, report: d.report, slideCount: count, shape: design.shape, model: models.analysis });
+    note = `Carousel plan ready from a separate Gemini chat: ${plan.slides.length} slides (up to ${count} chosen), ${design.shape} pictures`;
   }
   return {
     state: "generating",
     data: {
       format: "carousel",
       slideCount: count,
+      design,
       carousel: plan,
       analysis: plan.analysis,
       imagePrompt: summary(plan),
@@ -62,6 +74,7 @@ export async function generateSlide(job: JobRow, wf: Workflow, models: ModelSett
   const d = job.data;
   const plan = d.carousel;
   if (!plan) throw new Error("No carousel plan stored. Retry from the analysis step.");
+  const design = d.design ?? DESIGN_DEFAULT;
   const i = d.slideIndex ?? 0;
   const slide = plan.slides[i];
   if (!slide) throw new Error(`Slide ${i + 1} is not in the plan. Retry from the analysis step.`);
@@ -69,7 +82,13 @@ export async function generateSlide(job: JobRow, wf: Workflow, models: ModelSett
   const fix = d.slideFix && d.slideFix.index === i ? d.slideFix : undefined;
   // A reviewer's notes from a rejection apply to every slide of the new set.
   const notes = [...(fix?.notes ?? []), ...(d.reviewFeedback ? [`Reviewer notes: ${d.reviewFeedback}`] : [])];
-  const prompt = slidePrompt(plan.styleGuide, { ...slide, imagePrompt: fix?.imagePrompt || slide.imagePrompt }, { index: i, total: plan.slides.length }, notes);
+  const prompt = slidePrompt(
+    plan.styleGuide,
+    { ...slide, imagePrompt: fix?.imagePrompt || slide.imagePrompt },
+    { index: i, total: plan.slides.length },
+    notes,
+    design.shape,
+  );
 
   const p = providers();
   let image: { bytes: Buffer };
@@ -94,8 +113,8 @@ export async function generateSlide(job: JobRow, wf: Workflow, models: ModelSett
     );
   }
   const attempt = job.attempts + 1;
-  // Square first, so every slide is 1080 by 1080 whatever shape the generator returned.
-  const shrunk = await shrinkForSending(await squareForInstagram(image.bytes));
+  // Cut to the carousel's shape first, so every slide has the same frame whatever shape the generator returned.
+  const shrunk = await shrinkForSending(await shapeForInstagram(image.bytes, design.shape), sizeOf(design.shape));
   const path = await saveDraft(draftPath(job.id, attempt, i), shrunk.bytes, shrunk.contentType);
 
   const images: SlideImage[] = [...(d.slideImages ?? [])];
@@ -110,11 +129,12 @@ export async function generateSlide(job: JobRow, wf: Workflow, models: ModelSett
   };
 }
 
-/** Checks the current slide against its prompt and its headline. */
+/** Checks the current slide's picture against its prompt, its shape, and the rule that it has no text. */
 export async function verifySlide(job: JobRow, wf: Workflow, models: ModelSettings): Promise<StepResult> {
   const d = job.data;
   const plan = d.carousel;
   if (!plan) throw new Error("No carousel plan stored. Retry from the analysis step.");
+  const design = d.design ?? DESIGN_DEFAULT;
   const total = plan.slides.length;
   const i = d.slideIndex ?? 0;
   const slide = plan.slides[i];
@@ -135,11 +155,34 @@ export async function verifySlide(job: JobRow, wf: Workflow, models: ModelSettin
     mimeType: stored.contentType,
     attempt: job.attempts,
     model: models.verify,
-    expectedText: expectedText(slide),
-    square: true, // a carousel slide is square: a landscape or portrait picture fails the check
+    shape: design.shape, // the picture must match the carousel's shape and contain no text
   });
   images[i] = { ...img, pass: verdict.pass, issues: verdict.issues };
   return afterCheck(i, total, img, verdict, images, wf);
+}
+
+/**
+ * Writes each slide's text onto its checked picture and saves the result as the picture that is reviewed and
+ * posted. The checked picture is not changed. Running this again rebuilds the same pictures from the checked ones.
+ */
+export async function composeCarousel(job: JobRow): Promise<number> {
+  const d = job.data;
+  const plan = d.carousel;
+  if (!plan) throw new Error("No carousel plan stored. Retry from the analysis step.");
+  const design = d.design ?? DESIGN_DEFAULT;
+  const images = d.slideImages ?? [];
+  const total = plan.slides.length;
+  if (images.length !== total) {
+    throw new Error(`The carousel has ${images.length} of ${total} pictures. Retry from the image step.`);
+  }
+  for (let i = 0; i < total; i++) {
+    const checked = await readDraft(images[i].path);
+    const slide = plan.slides[i];
+    const picture = await composeSlide(checked.bytes, { ...slide, design, index: i, total });
+    const shrunk = await shrinkForSending(picture, sizeOf(design.shape));
+    await saveDraft(finalDraftPath(job.id, images[i].attempt, i), shrunk.bytes, shrunk.contentType);
+  }
+  return total;
 }
 
 /**

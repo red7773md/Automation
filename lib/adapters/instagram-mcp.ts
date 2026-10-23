@@ -74,15 +74,16 @@ export const instagram: Providers["instagram"] = {
     return { mediaId, raw };
   },
 
-  async postAlbum({ imageUrls, caption }) {
+  async postAlbum({ imageUrls, caption, aspect }) {
     if (imageUrls.length < 2 || imageUrls.length > 10) {
       throw new Error(`An Instagram carousel needs 2 to 10 pictures, not ${imageUrls.length}`);
     }
-    // Same square frame as a single picture. The album tool takes no dry_run argument, so none is sent.
+    // The frame comes from the carousel's shape: square by default, or portrait 4:5 when chosen in Settings.
+    // The album tool takes no dry_run argument, so none is sent.
     const raw = await call(NAME.album, {
       caption,
       image_paths_or_urls: imageUrls,
-      aspect: "square",
+      aspect: aspect ?? "square",
       disable_comments: false,
     });
     if (!isSuccess(raw)) throw new Error(`Instagram did not post the carousel: ${raw.slice(0, 400)}`);

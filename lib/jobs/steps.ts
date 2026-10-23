@@ -12,9 +12,10 @@ import { publicMediaUrl } from "@/lib/media";
 import { defaultModels, type ModelSettings } from "@/lib/settings";
 import { normalizeWorkflow, type Workflow } from "./workflow";
 import { MAX_GENERATIONS, type JobRow, type State } from "./states";
-import { analyzeCarousel, generateSlide, verifySlide } from "./carousel-steps";
+import { analyzeCarousel, composeCarousel, generateSlide, verifySlide } from "./carousel-steps";
 import { quickResearch } from "./quick-steps";
 import { withSources } from "./quick";
+import { COMMENT_TOTAL_LIMIT, splitComment } from "./comments";
 
 const kb = (bytes: number) => (bytes / 1024).toFixed(0);
 
@@ -44,7 +45,8 @@ export function normalizePlan(p: Partial<Plan>): Plan {
 
   return {
     caption,
-    commentBody: p.commentBody!.trim().slice(0, MAX_TEXT),
+    // Long descriptions are split into numbered comments when posted, so the limit here is the total of all parts.
+    commentBody: p.commentBody!.trim().slice(0, COMMENT_TOTAL_LIMIT),
     imagePrompt: p.imagePrompt!.trim(),
   };
 }
@@ -229,6 +231,8 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
     }
 
     case "captioning": {
+      // A carousel's pictures get their text here, once every slide is checked. The checked pictures are kept as they are.
+      const slidesDone = (d.format ?? "post") === "carousel" ? await composeCarousel(job) : 0;
       let plan: Plan;
       if (wf.skipCaption) {
         plan = normalizePlan({ caption: manual.caption, commentBody: manual.commentBody, imagePrompt: d.imagePrompt ?? "" });
@@ -244,7 +248,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       return {
         state: post ? "publishing" : "awaiting_review",
         data: { plan },
-        note: `${wf.skipCaption ? "Caption written by you" : "Caption ready"} (${plan.caption.length} characters with hashtags), pinned comment ${plan.commentBody.length} characters. ${
+        note: `${slidesDone ? `Text drawn on ${slidesDone} slides. ` : ""}${wf.skipCaption ? "Caption written by you" : "Caption ready"} (${plan.caption.length} characters with hashtags), pinned comment ${plan.commentBody.length} characters in ${splitComment(plan.commentBody).length} comment(s). ${
           post ? "Posting now without your approval." : "Waiting for your approval."
         }`,
       };
@@ -265,7 +269,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
           throw new Error(`The carousel has ${slides.length} of ${planned} pictures. Retry from the image step.`);
         }
         const imageUrls = slides.map((img, i) => (dryRun ? "mock://draft" : publicMediaUrl(job.id, img.attempt, i)));
-        const album = await p.instagram.postAlbum({ imageUrls, caption: plan.caption });
+        const album = await p.instagram.postAlbum({ imageUrls, caption: plan.caption, aspect: d.design?.shape ?? "square" });
         return {
           state: "publishing",
           data: { publish: { ...pub, mediaId: album.mediaId, dryRun } },
@@ -283,21 +287,35 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
           detail: post.raw,
         };
       }
-      if (!pub.commentId) {
-        const c = await p.instagram.comment({ mediaId: pub.mediaId, text: plan.commentBody });
+      // A long description goes out as numbered comments, 1/3, 2/3, ... The first is pinned. Each part is saved
+      // as soon as it is posted, so a retry never posts a part twice.
+      const parts = splitComment(plan.commentBody);
+      const ids = pub.commentIds ?? (pub.commentId ? [pub.commentId] : []);
+      if (ids.length === 0) {
+        const c = await p.instagram.comment({ mediaId: pub.mediaId, text: parts[0] });
         return {
           state: "publishing",
-          data: { publish: { ...pub, commentId: c.commentId } },
-          note: `${tag}detail comment posted (${c.commentId})`,
+          data: { publish: { ...pub, commentIds: [c.commentId], commentId: c.commentId } },
+          note: `${tag}detail comment 1 of ${parts.length} posted (${c.commentId})`,
           detail: c.raw,
         };
       }
       if (!pub.pinned) {
-        await p.instagram.pin({ commentId: pub.commentId, mediaId: pub.mediaId });
+        await p.instagram.pin({ commentId: ids[0], mediaId: pub.mediaId });
         return {
           state: "publishing",
-          data: { publish: { ...pub, pinned: true } },
-          note: `${tag}detail comment pinned`,
+          data: { publish: { ...pub, commentIds: ids, commentId: ids[0], pinned: true } },
+          note: `${tag}detail comment 1 of ${parts.length} pinned`,
+        };
+      }
+      if (ids.length < parts.length) {
+        const k = ids.length;
+        const c = await p.instagram.comment({ mediaId: pub.mediaId, text: parts[k] });
+        return {
+          state: "publishing",
+          data: { publish: { ...pub, commentIds: [...ids, c.commentId] } },
+          note: `${tag}detail comment ${k + 1} of ${parts.length} posted (${c.commentId})`,
+          detail: c.raw,
         };
       }
       return {

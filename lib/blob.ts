@@ -6,6 +6,14 @@ export function draftPath(jobId: string, attempt: number, slide?: number): strin
   return slide === undefined ? `drafts/${jobId}/${attempt}` : `drafts/${jobId}/${attempt}-${slide}`;
 }
 
+/**
+ * The picture as it is reviewed and posted: a carousel slide with its text on it. It is kept apart from the
+ * checked picture, which is never changed, so the check always sees a picture with no text.
+ */
+export function finalDraftPath(jobId: string, attempt: number, slide: number): string {
+  return `drafts/${jobId}/${attempt}-${slide}-final`;
+}
+
 /** The research report, saved as Markdown. It is downloadable and is what the analysis chat reads. */
 export function reportPath(jobId: string): string {
   return `reports/${jobId}.md`;

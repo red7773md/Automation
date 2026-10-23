@@ -3,6 +3,7 @@
 import { getDb } from "./db";
 import { defaultWorkflow, normalizeWorkflow, type Workflow } from "./jobs/workflow";
 import { CAROUSEL_DEFAULT, clampSlideCount } from "./jobs/carousel";
+import { DESIGN_DEFAULT, normalizeDesign, type SlideDesign } from "./jobs/design";
 
 export const TASKS = ["research", "analysis", "caption", "image", "verify"] as const;
 export type Task = (typeof TASKS)[number];
@@ -85,18 +86,21 @@ export async function saveWorkflow(workflow: Workflow): Promise<void> {
     on conflict (key) do update set value = excluded.value, updated_at = now()`;
 }
 
-/** How many slides a carousel gets by default. A post may give fewer when the topic needs fewer. */
-export type CarouselSettings = { slideCount: number };
+/**
+ * How many slides a carousel gets by default, and the look of every slide: the picture shape (square or
+ * portrait), the account name on the bottom bar, and the footer text. A post may give fewer slides when the topic needs fewer.
+ */
+export type CarouselSettings = { slideCount: number } & SlideDesign;
 
 export function defaultCarousel(): CarouselSettings {
-  return { slideCount: CAROUSEL_DEFAULT };
+  return { slideCount: CAROUSEL_DEFAULT, ...DESIGN_DEFAULT };
 }
 
 /** Accepts a partial or full object. A count outside 3 to 10 is refused, not clamped, so the saved value is always the one shown. */
 export function normalizeCarousel(input: unknown): CarouselSettings {
   if (!input || typeof input !== "object") throw new Error("Carousel settings must be an object");
   const raw = (input as Record<string, unknown>).slideCount;
-  return { slideCount: raw === undefined || raw === null ? CAROUSEL_DEFAULT : clampSlideCount(raw) };
+  return { slideCount: raw === undefined || raw === null ? CAROUSEL_DEFAULT : clampSlideCount(raw), ...normalizeDesign(input) };
 }
 
 export async function loadCarousel(): Promise<CarouselSettings> {

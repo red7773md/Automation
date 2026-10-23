@@ -76,6 +76,7 @@ export const mockProviders: Providers = {
       styleGuide: "Flat illustration, bright colours, plenty of empty space for text.",
       slides: Array.from({ length: slideCount }, (_, i) => ({
         role: i === 0 ? "hook" : i === slideCount - 1 ? "cta" : "point",
+        figure: i === 0 ? "3x" : "",
         headline: i === 0 ? `Why ${topic} matters more than you think` : i === slideCount - 1 ? "Save this for later" : `Point ${i} about ${topic}`,
         body: i === 0 ? "Three facts that change the picture" : "",
         imagePrompt: `Slide ${i + 1}: a simple flat illustration about ${topic}, square format.`,

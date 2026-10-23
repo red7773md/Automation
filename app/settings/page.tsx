@@ -342,13 +342,16 @@ function WorkflowCard() {
 }
 
 type CarouselData = {
-  carousel: { slideCount: number };
-  carouselLimits: { min: number; max: number; default: number };
+  carousel: { slideCount: number; shape: "square" | "portrait"; handle: string; footer: string };
+  carouselLimits: { min: number; max: number; default: number; handleMax: number };
 };
 
 function CarouselCard() {
   const [data, setData] = useState<CarouselData | null>(null);
   const [draft, setDraft] = useState("");
+  const [shape, setShape] = useState<"square" | "portrait">("square");
+  const [handle, setHandle] = useState("");
+  const [footer, setFooter] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note | null>(null);
 
@@ -357,6 +360,9 @@ function CarouselCard() {
       .then((d) => {
         setData(d);
         setDraft(String(d.carousel.slideCount));
+        setShape(d.carousel.shape);
+        setHandle(d.carousel.handle);
+        setFooter(d.carousel.footer);
       })
       .catch((e) => setNote({ ok: false, text: e instanceof Error ? e.message : String(e) }));
   }, []);
@@ -365,12 +371,15 @@ function CarouselCard() {
     setBusy(true);
     setNote(null);
     try {
-      const r = await api<{ carousel: { slideCount: number } }>("PUT", "/api/settings", {
-        carousel: { slideCount: Number(draft) },
+      const r = await api<{ carousel: CarouselData["carousel"] }>("PUT", "/api/settings", {
+        carousel: { slideCount: Number(draft), shape, handle: handle.trim(), footer: footer.trim() },
       });
       setDraft(String(r.carousel.slideCount));
+      setShape(r.carousel.shape);
+      setHandle(r.carousel.handle);
+      setFooter(r.carousel.footer);
       setData((prev) => (prev ? { ...prev, carousel: r.carousel } : prev));
-      setNote({ ok: true, text: `Carousels now get up to ${r.carousel.slideCount} slides. New jobs start with this number.` });
+      setNote({ ok: true, text: `Saved. Carousels get up to ${r.carousel.slideCount} ${r.carousel.shape} slides. New jobs start with these settings.` });
     } catch (err) {
       setNote({ ok: false, text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -382,10 +391,13 @@ function CarouselCard() {
     return <section className="card">{note ? <p className="error">{note.text}</p> : <span className="muted">Loading carousel settings…</span>}</section>;
   }
 
-  const { min, max, default: usual } = data.carouselLimits;
+  const { min, max, default: usual, handleMax } = data.carouselLimits;
   const n = Number(draft);
   const valid = Number.isInteger(n) && n >= min && n <= max;
-  const changed = valid && n !== data.carousel.slideCount;
+  const textTooLong = handle.trim().length > handleMax || footer.trim().length > handleMax;
+  const saved = data.carousel;
+  const changed =
+    valid && !textTooLong && (n !== saved.slideCount || shape !== saved.shape || handle.trim() !== saved.handle || footer.trim() !== saved.footer);
 
   return (
     <section className="card stack">
@@ -406,6 +418,25 @@ function CarouselCard() {
           style={{ maxWidth: 120 }}
         />
       </label>
+      <label className="stack" style={{ gap: 4 }}>
+        <span>Picture shape</span>
+        <span className="muted" style={{ fontSize: "0.85em" }}>Square is the default. Portrait takes more of the phone screen.</span>
+        <select value={shape} onChange={(e) => setShape(e.target.value as "square" | "portrait")} style={{ maxWidth: 260 }}>
+          <option value="square">Square 1:1 (1080 × 1080)</option>
+          <option value="portrait">Portrait 4:5 (1080 × 1350)</option>
+        </select>
+      </label>
+      <label className="stack" style={{ gap: 4 }}>
+        <span>Account name on the bottom bar</span>
+        <span className="muted" style={{ fontSize: "0.85em" }}>Your Instagram username, shown with @. Leave empty to show none.</span>
+        <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="yourname" style={{ maxWidth: 320 }} />
+      </label>
+      <label className="stack" style={{ gap: 4 }}>
+        <span>Footer text on the bottom bar</span>
+        <span className="muted" style={{ fontSize: "0.85em" }}>Small text on the right of every slide, such as Follow for more.</span>
+        <input value={footer} onChange={(e) => setFooter(e.target.value)} placeholder="Follow for more" style={{ maxWidth: 320 }} />
+      </label>
+      {textTooLong && <p className="error" style={{ margin: 0 }}>The account name and the footer can be up to {handleMax} characters each.</p>}
       {!valid && <p className="error" style={{ margin: 0 }}>Choose a whole number from {min} to {max}.</p>}
       <div className="row">
         <button className="primary" disabled={busy || !changed} onClick={save}>

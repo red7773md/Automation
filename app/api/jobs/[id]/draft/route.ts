@@ -1,5 +1,5 @@
 import { adminRoute, json, UUID_RE } from "@/lib/api";
-import { draftPath, openDraft } from "@/lib/blob";
+import { draftPath, finalDraftPath, openDraft } from "@/lib/blob";
 import { getDb } from "@/lib/db";
 
 type P = { id: string };
@@ -25,7 +25,19 @@ export const GET = adminRoute<P>(async (req, { params }) => {
   }
   if (!path) return json({ error: "No draft yet" }, 404);
 
-  const draft = await openDraft(path);
+  // A carousel slide shows its final picture (with the text) once the text is drawn, and its checked picture before that.
+  let draft;
+  if (slideParam !== null) {
+    const n = Number(slideParam);
+    const img = (job.data?.slideImages ?? [])[n] as { attempt: number } | undefined;
+    try {
+      draft = await openDraft(finalDraftPath(id, img!.attempt, n));
+    } catch {
+      draft = await openDraft(path);
+    }
+  } else {
+    draft = await openDraft(path);
+  }
   return new Response(draft.stream, {
     headers: { "content-type": draft.contentType, "cache-control": "no-store" },
   });

@@ -1,5 +1,5 @@
 import { UUID_RE } from "@/lib/api";
-import { draftPath, openDraft } from "@/lib/blob";
+import { draftPath, finalDraftPath, openDraft } from "@/lib/blob";
 import { verifyMediaSignature } from "@/lib/media";
 
 type P = { jobId: string; attempt: string };
@@ -25,7 +25,9 @@ export async function GET(req: Request, { params }: { params: Promise<P> }) {
     return new Response("Forbidden", { status: 403 });
   }
   try {
-    const draft = await openDraft(draftPath(jobId, Number(attempt), slide));
+    // A carousel slide is posted with its text on it, so its link serves the final picture.
+    const path = slide === undefined ? draftPath(jobId, Number(attempt)) : finalDraftPath(jobId, Number(attempt), slide);
+    const draft = await openDraft(path);
     return new Response(draft.stream, {
       headers: { "content-type": draft.contentType, "cache-control": "public, max-age=300" },
     });

@@ -4,7 +4,8 @@
 // (JSON, operation -> tool name) overrides it when it picks the wrong tool.
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
-import { IMAGE_PROMPT_LIMIT, IMAGE_RULES, parseCarouselPlan } from "@/lib/jobs/carousel";
+import { IMAGE_PROMPT_LIMIT, parseCarouselPlan } from "@/lib/jobs/carousel";
+import { imageRules } from "@/lib/jobs/design";
 import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
 import {
@@ -350,7 +351,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           reportVia: attached ? "attached" : "pasted",
         };
       }),
-    analyzeCarousel: ({ topic, report, slideCount, model }) =>
+    analyzeCarousel: ({ topic, report, slideCount, shape, model }) =>
       r.run("analyze", async (client, route, cookie): Promise<CarouselPlan> => {
         // Same route as the single-post analysis: the report goes as a file when the tool takes one.
         const attached = Boolean(route.keys.attachments);
@@ -363,7 +364,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
             prompt: fill(CAROUSEL_PROMPT, {
               topic,
               count: String(slideCount),
-              rules: IMAGE_RULES,
+              rules: imageRules(shape ?? "square"),
               report: attached ? REPORT_ATTACHED : report,
             }),
             model,
@@ -395,18 +396,16 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
         const d = extractJson(res.text);
         return { caption: String(d.caption ?? ""), commentBody: String(d.commentBody ?? "") };
       }),
-    verifyImage: ({ topic, imagePrompt, image, model, expectedText, square }) =>
+    verifyImage: ({ topic, imagePrompt, image, model, shape }) =>
       r.run("verifyImage", async (client, route, cookie) => {
         // Extra checks are numbered after the five standard ones. Single posts get none of them.
+        // A carousel picture is checked for its shape and for having no text: the app writes all text itself.
         const extraLines: string[] = [];
-        if (square) {
+        if (shape) {
+          const frame = shape === "portrait" ? "portrait, 4:5" : "square, 1:1";
           extraLines.push(
-            `${6 + extraLines.length}. The picture must be square (1:1) with no border or margin. Fail the check if it is landscape or portrait.`,
-          );
-        }
-        if (expectedText) {
-          extraLines.push(
-            `${6 + extraLines.length}. The image must show this text exactly as written: "${expectedText}". Fail the check if it is missing, misspelled or hard to read.`,
+            `6. The picture must be ${frame} with no border or margin. Fail the check if it is landscape or another shape.`,
+            "7. The picture must contain no text of any kind: no letters, words, numbers, captions or signatures. Fail the check if any appear.",
           );
         }
         const extra = extraLines.join("\n");

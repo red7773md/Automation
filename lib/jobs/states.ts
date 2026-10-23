@@ -1,5 +1,6 @@
 // Pure constants and types. Imported by both server and browser code.
 import type { CarouselPlan, ConfirmedPoint, Plan, QuickSearch, Verdict } from "@/lib/adapters/types";
+import type { SlideDesign } from "./design";
 import type { ManualInputs, Workflow } from "./workflow";
 
 export const STATES = [
@@ -84,7 +85,7 @@ export type QuickData = {
   cited?: { url: string; title: string }[]; // the sources kept for the post, put in the pinned comment
 };
 
-export type PublishProgress = { mediaId?: string; commentId?: string; pinned?: boolean; dryRun?: boolean };
+export type PublishProgress = { mediaId?: string; commentId?: string; commentIds?: string[]; pinned?: boolean; dryRun?: boolean };
 
 export type JobData = {
   researchRef?: string;
@@ -109,6 +110,7 @@ export type JobData = {
   publishedAt?: string;
   format?: JobFormat; // a missing format means a single post
   slideCount?: number; // carousel: the number of slides chosen for this job
+  design?: SlideDesign; // carousel: picture shape, account name and footer, as they were when the job was created
   carousel?: CarouselPlan; // carousel: the analysis, the shared style and the slides in swipe order
   slideImages?: SlideImage[]; // carousel: one entry per slide, in order, as far as they have been made
   slideIndex?: number; // carousel: the slide being made or checked now

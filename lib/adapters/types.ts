@@ -1,3 +1,5 @@
+import type { Shape } from "@/lib/jobs/design";
+
 export type Plan = {
   caption: string; // short hook plus hashtags, shown in the feed
   commentBody: string; // detailed description, posted then pinned as the first comment
@@ -18,9 +20,10 @@ export type Caption = {
 /** One slide of a carousel: where it sits in the swipe order, the text the picture shows, and the prompt that makes the picture. */
 export type Slide = {
   role: "hook" | "point" | "cta"; // hook is the first slide, cta the last
-  headline: string; // large text on the picture; empty when the slide was written by hand
+  figure?: string; // hook only: a short number from the research, drawn large over the picture
+  headline: string; // large text drawn over the picture; empty when the slide was written by hand
   body: string; // a smaller line under the headline
-  imagePrompt: string;
+  imagePrompt: string; // describes the picture only: the app draws all the text
 };
 
 /** What a carousel analysis returns: the angle, the look shared by every slide, and the slides in swipe order. */
@@ -67,7 +70,7 @@ export type Providers = {
     startResearch(topic: string, model?: string): Promise<{ ref: string }>;
     pollResearch(ref: string): Promise<ResearchPoll>;
     analyze(args: { topic: string; report: string; model?: string }): Promise<Analysis>;
-    analyzeCarousel(args: { topic: string; report: string; slideCount: number; model?: string }): Promise<CarouselPlan>;
+    analyzeCarousel(args: { topic: string; report: string; slideCount: number; shape?: Shape; model?: string }): Promise<CarouselPlan>;
     search(args: { topic: string; model?: string }): Promise<QuickSearch>; // quick research: facts found on the web, with their pages
     confirm(args: {
       topic: string;
@@ -83,8 +86,7 @@ export type Providers = {
       model?: string;
       mimeType: string;
       attempt: number;
-      expectedText?: string; // the headline the picture must show, when the slide has one
-      square?: boolean; // a carousel slide: the picture must be square, with no logo or mark
+      shape?: Shape; // a carousel slide: the picture must be this shape and must contain no text
     }): Promise<Verdict>;
     generateImage(prompt: string, model?: string): Promise<{ bytes: Buffer; mimeType: string }>;
   };
@@ -95,7 +97,7 @@ export type Providers = {
   instagram: {
     listTools(): Promise<ToolSummary[]>;
     postPhoto(args: { imageUrl: string; caption: string }): Promise<{ mediaId: string; raw: string }>;
-    postAlbum(args: { imageUrls: string[]; caption: string }): Promise<{ mediaId: string; raw: string }>; // 2 to 10 pictures, in order
+    postAlbum(args: { imageUrls: string[]; caption: string; aspect?: Shape }): Promise<{ mediaId: string; raw: string }>; // 2 to 10 pictures, in order
     comment(args: { mediaId: string; text: string }): Promise<{ commentId: string; raw: string }>;
     pin(args: { commentId: string; mediaId: string }): Promise<{ raw: string }>;
     status(): Promise<Health & { username?: string }>; // is the Instagram login still valid

@@ -636,17 +636,16 @@ async function main() {
   assert.throws(() => carousel.slidesFromLines("a\nb\nc", 2), /3 image prompts, but this carousel has 2 slides/);
   ok("hand-written slides: one prompt per line, first line is the hook, blank lines ignored, too many refused");
 
-  const hook = { role: "hook" as const, headline: "Why coffee helps", body: "Three facts", imagePrompt: "a cup on a desk" };
+  const hook = { role: "hook" as const, figure: "3x", headline: "Why coffee helps", body: "Three facts", imagePrompt: "a cup on a desk" };
   const hookPrompt = carousel.slidePrompt("Flat illustration.", hook, { index: 0, total: 8 });
-  assert.ok(hookPrompt.includes("Swipe for more"), "the hook asks the viewer to swipe");
-  assert.ok(hookPrompt.includes('"Why coffee helps"') && hookPrompt.includes('"Three facts"'), "the headline and body are shown exactly");
+  assert.ok(hookPrompt.includes("NO TEXT"), "every picture is asked for without text: the app draws the words");
+  assert.ok(!hookPrompt.includes("Why coffee helps") && !hookPrompt.includes("Three facts"), "the slide's words stay out of the picture request");
   assert.ok(hookPrompt.includes("Slide 1 of 8") && hookPrompt.includes("Flat illustration."), "the position and the shared style are given");
+  assert.ok(hookPrompt.includes("first slide"), "the hook is asked to be striking");
   const point = carousel.slidePrompt("Flat illustration.", { role: "point", headline: "", body: "", imagePrompt: "steam" }, { index: 3, total: 8 }, ["text garbled."]);
-  assert.ok(!point.includes("Swipe for more"), "only the hook asks to swipe");
+  assert.ok(!point.includes("first slide"), "only the hook is marked as the first slide");
   assert.ok(point.includes("Slide 4 of 8") && point.includes("Fix these problems: text garbled."), "a correction is added to the prompt");
-  assert.equal(carousel.expectedText(hook), "Why coffee helps");
-  assert.equal(carousel.expectedText(point), undefined, "a slide written by hand has no text to check");
-  ok("slide prompts: the hook says swipe and shows its text; corrections are added; hand-written slides have no text to check");
+  ok("slide prompts: text stays out of the picture request; the hook is marked; corrections are added");
 
   const img = (pass: boolean | undefined, issues?: string[]) => ({ attempt: 1, path: "drafts/x/1/1", tries: 1, pass, issues });
   assert.deepEqual(carousel.carouselVerdict([img(true), img(true)], 2, false), { pass: true, issues: [] });
@@ -705,20 +704,25 @@ async function main() {
     assert.ok(String(sent.args.prompt).includes("Topic: coffee"));
     assert.ok(String(sent.args.prompt).includes("at most 8"), "the prompt carries the chosen slide count");
     assert.ok(String(sent.args.prompt).includes("exactly 1:1"), "the prompt carries the picture rules");
-    assert.ok(String(sent.args.prompt).includes("NO LOGO"), "the prompt forbids logos before any prompt is written");
+    assert.ok(String(sent.args.prompt).includes("NO TEXT"), "the prompt forbids text before any prompt is written: the app draws it");
     assert.ok(String(sent.args.prompt).includes("under 400 characters"), "the prompt states the length limit");
     assert.ok(String(sent.args.prompt).includes("1000 characters"), "the prompt states the tool's limit");
     assert.deepEqual(sent.args.attachments, [{ name: "research-report.md", content_base64: Buffer.from("# Coffee report\n\nFacts.").toString("base64") }]);
     assert.equal((await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3 })).slides.length, 3);
-    ok("carousel analysis: the chosen count and the report file go to Gemini; the reply is cut to that count");
+    await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3, shape: "portrait" });
+    assert.ok(String(askFake.calls.at(-1)!.args.prompt).includes("exactly 4:5"), "a portrait carousel asks for 4:5 pictures");
+    ok("carousel analysis: the chosen count, the shape and the report file go to Gemini; the reply is cut to that count");
 
-    const withHeadline = await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1, expectedText: "Why coffee helps" });
-    assert.equal(withHeadline.pass, true);
-    assert.ok(String(askFake.calls.at(-1)!.args.prompt).includes('exactly as written: "Why coffee helps"'), "the headline is part of the check");
+    await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1, shape: "square" });
+    const squareCheck = String(askFake.calls.at(-1)!.args.prompt);
+    assert.match(squareCheck, /6\. The picture must be square, 1:1/, "a carousel picture must be square");
+    assert.match(squareCheck, /7\. The picture must contain no text of any kind/, "a carousel picture must have no text");
+    await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1, shape: "portrait" });
+    assert.match(String(askFake.calls.at(-1)!.args.prompt), /6\. The picture must be portrait, 4:5/);
     await cg.verifyImage({ topic: "coffee", imagePrompt: "a cup", image: Buffer.from("x"), mimeType: "image/png", attempt: 1 });
-    assert.equal(String(askFake.calls.at(-1)!.args.prompt).includes("exactly as written"), false, "no text check without a headline");
+    assert.equal(String(askFake.calls.at(-1)!.args.prompt).includes("no text of any kind"), false, "a single post is not held to the no-text rule");
     assert.equal(String(askFake.calls.at(-1)!.args.prompt).includes("{extra}"), false, "no placeholder is left in the prompt");
-    ok("carousel check: a slide's headline is checked as written; slides without one are not");
+    ok("carousel check: a slide's picture must match its shape and have no text; single posts get neither rule");
   } finally {
     await askFake.close();
   }
@@ -753,11 +757,15 @@ async function main() {
   assert.equal(carousel.parseFormat("carousel"), "carousel");
   assert.throws(() => carousel.parseFormat("reel"), /must be "post" or "carousel"/);
   const { normalizeCarousel, defaultCarousel } = await import("@/lib/settings");
-  assert.deepEqual(defaultCarousel(), { slideCount: 8 });
-  assert.deepEqual(normalizeCarousel({}), { slideCount: 8 });
-  assert.deepEqual(normalizeCarousel({ slideCount: "5" }), { slideCount: 5 });
+  const plainDesign = { shape: "square", handle: "", footer: "Follow for more" };
+  assert.deepEqual(defaultCarousel(), { slideCount: 8, ...plainDesign });
+  assert.deepEqual(normalizeCarousel({}), { slideCount: 8, ...plainDesign });
+  assert.deepEqual(normalizeCarousel({ slideCount: "5" }), { slideCount: 5, ...plainDesign });
+  assert.deepEqual(normalizeCarousel({ slideCount: 4, shape: "portrait", handle: " rvcj.ai ", footer: "" }), { slideCount: 4, shape: "portrait", handle: "rvcj.ai", footer: "" });
   assert.throws(() => normalizeCarousel({ slideCount: 12 }), /whole number from 3 to 10/);
-  ok("carousel formats and the saved count: missing means a post and 8 slides; out of range is refused");
+  assert.throws(() => normalizeCarousel({ shape: "landscape" }), /"square" or "portrait"/);
+  assert.throws(() => normalizeCarousel({ handle: "x".repeat(41) }), /longer than 40 characters/);
+  ok("carousel settings: missing means a post, 8 square slides and the default footer; shape, name and footer are checked");
 
   const { draftPath } = await import("@/lib/blob");
   assert.equal(draftPath("job", 4), "drafts/job/4", "a single post keeps its path");
@@ -806,15 +814,16 @@ async function main() {
   });
   const handWritten = { ...defaultWorkflow(), skipAnalysis: true };
   const planned = await runStep(
-    jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "hook line\npoint line\nlast line" } }),
+    jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "hook line\npoint line\nlast line" }, design: { shape: "portrait", handle: "rvcj.ai", footer: "Follow for more" } }),
   );
   assert.equal(planned.state, "generating");
   assert.equal((planned.data?.carousel as any).slides.length, 3);
   assert.equal((planned.data?.carousel as any).slides[0].role, "hook");
   assert.deepEqual(planned.data?.slideImages, []);
   assert.equal(planned.data?.slideIndex, 0);
+  assert.deepEqual(planned.data?.design, { shape: "portrait", handle: "rvcj.ai", footer: "Follow for more" }, "the look is kept with the job");
   await assert.rejects(
-    () => runStep(jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "one" } })),
+    () => runStep(jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "one" }, design: { shape: "square", handle: "", footer: "" } })),
     /at least two lines/,
   );
   ok("carousel analysis, skipped: your prompts become the slides, the first is the hook");
@@ -933,9 +942,9 @@ async function main() {
   const withBlock = withSources("Body text", cited);
   assert.ok(withBlock.startsWith("Body text") && withBlock.includes("Sources, checked before posting:") && withBlock.includes("https://a.example/x"));
   assert.equal(withSources("Plain", undefined), "Plain", "no sources: the comment is unchanged");
-  assert.ok(withSources("x".repeat(3000), cited).length <= 2200, "the comment stays within the limit");
-  assert.ok(withSources("x".repeat(3000), cited).includes("https://a.example/x"), "the sources survive a long comment");
-  ok("pinned comment: sources added at the end, and the whole comment stays within the limit");
+  assert.ok(withSources("x".repeat(30000), cited).length <= 15_200, "the description stays within the total limit of its comments");
+  assert.ok(withSources("x".repeat(3000), cited).includes("https://a.example/x"), "the sources survive a long description");
+  ok("pinned comment: sources added at the end, and the description stays within the total limit");
 
   const local = await fetchSource("http://127.0.0.1:9/page", "Local");
   assert.equal(local.ok, false);
@@ -1009,10 +1018,11 @@ async function main() {
     carouselMod.slidePrompt("Flat style", oneSlide, { index: 1, total: 3 }, ["the picture is landscape"]),
   ]) {
     assert.match(text, /exactly 1:1/, "every request states the square format");
-    assert.match(text, /NO LOGO/, "every request forbids logos and marks");
+    assert.match(text, /NO TEXT/, "every request forbids text: the app draws it");
     assert.match(text, /Never landscape or portrait/);
+    assert.doesNotMatch(text, /Sleep/, "the slide's words stay out of the picture");
   }
-  ok("every slide request carries the square format and the no-logo rule, including fixes");
+  ok("every slide request carries the square format and the no-text rule, including fixes");
 
   const huge = carouselMod.slidePrompt(
     "Style words ".repeat(200),
@@ -1022,21 +1032,29 @@ async function main() {
   );
   assert.ok(huge.length <= carouselMod.IMAGE_PROMPT_LIMIT, `the prompt is ${huge.length} characters, over the limit`);
   assert.match(huge, /exactly 1:1/, "the rules survive a long prompt");
-  assert.match(huge, /NO LOGO/);
-  assert.match(huge, /Swipe for more/, "the hook's swipe line survives a long prompt");
+  assert.match(huge, /NO TEXT/);
+  assert.match(huge, /first slide/, "the hook's note survives a long prompt");
+  const hugePortrait = carouselMod.slidePrompt("Style words ".repeat(200), { role: "hook", headline: "H", body: "B", imagePrompt: "scene ".repeat(800) }, { index: 0, total: 8 }, ["fix ".repeat(300)], "portrait");
+  assert.ok(hugePortrait.length <= carouselMod.IMAGE_PROMPT_LIMIT && /exactly 4:5/.test(hugePortrait), "a portrait prompt stays within the limit and asks for 4:5");
   const shortOne = carouselMod.slidePrompt("", oneSlide, { index: 1, total: 3 });
   assert.ok(shortOne.length < carouselMod.IMAGE_PROMPT_LIMIT);
-  ok(`a slide prompt stays within ${carouselMod.IMAGE_PROMPT_LIMIT} characters even with long text; the rules and headline are kept`);
+  ok(`a slide prompt stays within ${carouselMod.IMAGE_PROMPT_LIMIT} characters even with long text; the rules and the hook's note are kept`);
 
   const wide = await sharpLib({ create: { width: 1600, height: 900, channels: 3, background: { r: 200, g: 120, b: 60 } } }).png().toBuffer();
   const tall = await sharpLib({ create: { width: 900, height: 1600, channels: 3, background: { r: 60, g: 120, b: 200 } } }).png().toBuffer();
   for (const picture of [wide, tall]) {
-    const squared = await imagesMod.squareForInstagram(picture);
+    const squared = await imagesMod.shapeForInstagram(picture, "square");
     const meta = await sharpLib(squared).metadata();
     assert.equal(meta.width, 1080);
     assert.equal(meta.height, 1080);
+    const framed = await imagesMod.shapeForInstagram(picture, "portrait");
+    const framedMeta = await sharpLib(framed).metadata();
+    assert.equal(framedMeta.width, 1080);
+    assert.equal(framedMeta.height, 1350);
   }
-  ok("landscape and portrait pictures are cropped to a 1080 by 1080 square");
+  assert.deepEqual(imagesMod.coverBox(1920, 1080, { width: 1080, height: 1080 }), { left: 495, top: 75, width: 930, height: 930 });
+  assert.deepEqual(imagesMod.coverBox(1024, 1024, { width: 1080, height: 1350 }), { left: 159, top: 71, width: 705, height: 882 });
+  ok("pictures are cut to the carousel's shape: 1080 by 1080 square or 1080 by 1350 portrait, from landscape and portrait sources");
 
   const squareFake = await startFakeMcp({
     tools: [
@@ -1050,14 +1068,14 @@ async function main() {
   });
   const squareGemini = createGemini({ url: () => squareFake.url, toolMap: () => undefined, cookie: async () => null });
   const picture = Buffer.from("fake");
-  await squareGemini.verifyImage({ topic: "tea", imagePrompt: "a cup", image: picture, mimeType: "image/jpeg", attempt: 1, square: true, expectedText: "Sleep" });
+  await squareGemini.verifyImage({ topic: "tea", imagePrompt: "a cup", image: picture, mimeType: "image/jpeg", attempt: 1, shape: "square" });
   const sent = String(squareFake.calls.at(-1)!.args.prompt);
-  assert.match(sent, /6\. The picture must be square/);
-  assert.match(sent, /7\. The image must show this text exactly as written: "Sleep"/);
+  assert.match(sent, /6\. The picture must be square, 1:1/);
+  assert.match(sent, /7\. The picture must contain no text of any kind/);
   await squareGemini.verifyImage({ topic: "tea", imagePrompt: "a cup", image: picture, mimeType: "image/jpeg", attempt: 1 });
   assert.doesNotMatch(String(squareFake.calls.at(-1)!.args.prompt), /must be square/, "single posts are not held to the square rule");
   await squareFake.close();
-  ok("picture check: carousel slides must be square and show their headline; single posts get neither rule");
+  ok("picture check: carousel slides must match their shape and have no text; single posts get neither rule");
 
   const citedPlan = carouselMod.parseCarouselPlan(
     JSON.stringify({
@@ -1074,9 +1092,8 @@ async function main() {
   assert.equal(citedPlan.slides[0].imagePrompt, "a brain.");
   const citedPrompt = carouselMod.slidePrompt("", citedPlan.slides[0], { index: 0, total: 2 });
   assert.ok(!citedPrompt.includes("[cite") && !citedPrompt.includes("[1]"), "citation markers never reach the picture");
-  assert.ok(!citedPrompt.includes("bottom-right"), "the swipe line is not placed in a corner");
-  assert.match(citedPrompt, /centred near the bottom edge/);
-  ok("slide text: citation markers are removed; the swipe line stays inside the safe margin");
+  assert.ok(!/Swipe|Retrieval helps/.test(citedPrompt), "the app draws the swipe line and the words, not the picture");
+  ok("slide text: citation markers are removed; the picture request carries none of the words");
 
   const blankFake = await startFakeMcp({
     tools: [
@@ -1144,6 +1161,57 @@ async function main() {
   assert.ok(Math.max(small.width, small.height) <= 1080, "the output is at most 1080 px on its longest side");
   assert.equal(isSendable(small.bytes, small.contentType), true);
   ok(`large PNG (${(big.length / 1024).toFixed(0)} KB) shrinks to ${(small.bytes.length / 1024).toFixed(0)} KB JPEG, ${small.width}x${small.height}`);
+
+  // ---------- carousel look: text on the picture, numbered comments, figure ----------
+  const comments = await import("@/lib/jobs/comments");
+  assert.deepEqual(comments.splitComment("A short description."), ["A short description."], "a short description is one comment, without a number");
+  const long = Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} explains one more point in plain words, with enough text to matter.`).join("\n\n");
+  const parts = comments.splitComment(long);
+  assert.ok(parts.length > 1, "a long description is split");
+  assert.ok(parts.every((p, i) => p.startsWith(`${i + 1}/${parts.length}\n`)), "each part is numbered k/N in order");
+  assert.ok(parts.every((p) => p.length <= comments.COMMENT_PART_LIMIT), "each part fits one comment");
+  assert.ok(parts.join(" ").includes("Paragraph 60"), "nothing is lost when the text fits the parts");
+  const capped = comments.splitComment("word ".repeat(20000));
+  assert.equal(capped.length, comments.MAX_COMMENT_PARTS, "past the part limit the description is cut");
+  assert.ok(capped.at(-1)!.endsWith("…"), "the cut is visible");
+  ok("long descriptions: numbered k/N comments, each within the limit, in order; the most parts is capped");
+
+  const designMod = await import("@/lib/jobs/design");
+  assert.deepEqual(designMod.sizeOf("square"), { width: 1080, height: 1080 });
+  assert.deepEqual(designMod.sizeOf("portrait"), { width: 1080, height: 1350 });
+  assert.match(designMod.imageRules("portrait"), /exactly 4:5/);
+  assert.throws(() => designMod.parseShape("landscape"), /"square" or "portrait"/);
+  ok("carousel shapes: square is 1080 by 1080, portrait is 1080 by 1350; any other shape is refused");
+
+  const overlay = await import("@/lib/overlay");
+  const fonts = overlay.loadFonts();
+  const hookText = { role: "hook" as const, figure: "3x", headline: "Why most RAG systems fail on long documents", body: "Three fixes that take one afternoon" };
+  const design = { shape: "square" as const, handle: "rvcj.ai", footer: "Follow for more" };
+  const svg = overlay.slideSvg({ ...hookText, design, index: 0, total: 3 }, fonts);
+  assert.ok(svg.startsWith('<svg') && svg.includes('width="1080" height="1080"'), "the overlay has the square frame");
+  assert.ok(!/NaN|undefined|Infinity/.test(svg), "no glyph outline has an invalid number");
+  const runs = overlay.layoutText(hookText, 1080, 1080, fonts);
+  assert.equal(runs[0].text, "3x", "the figure is drawn first, large");
+  assert.ok(runs.every((r) => r.y < 1080 - overlay.BAR), "the text stays above the bottom bar");
+  const portraitRuns = overlay.layoutText(hookText, 1080, 1350, fonts);
+  assert.ok(portraitRuns.every((r) => r.x >= 72 && r.y < 1350 - overlay.BAR), "portrait text keeps its margin and stays above the bar");
+  assert.ok(overlay.wrap(fonts.bold, "word ".repeat(40), 96, 936, 2).at(-1)!.endsWith("…"), "text past the last line ends in an ellipsis");
+  const barOnly = overlay.barRuns({ shape: "square", handle: "@rvcj.ai", footer: "" }, 1080, 1080, fonts);
+  assert.deepEqual(barOnly.map((r) => r.text), ["@rvcj.ai"], "the account name is shown with one @, and an empty footer is left out");
+  ok("slide text: the figure leads, the text stays above the bar in both shapes, and a long text ends in an ellipsis");
+
+  const figured = carouselMod.parseCarouselPlan(
+    JSON.stringify({ analysis: "a", styleGuide: "s", slides: [
+      { role: "hook", figure: "3x", headline: "Why it matters", body: "Brief", imagePrompt: "a lamp" },
+      { role: "point", figure: "9x", headline: "Next", body: "Detail", imagePrompt: "a book" },
+      { role: "cta", headline: "Save this", body: "", imagePrompt: "a flag" },
+    ] }),
+    3,
+  );
+  assert.equal(figured.slides[0].figure, "3x", "the hook keeps its figure");
+  assert.equal(figured.slides[1].figure, undefined, "only the hook has a figure");
+  assert.ok(!figured.slides[0].imagePrompt.includes("3x"), "the figure is drawn by the app, not in the picture");
+  ok("carousel plan: the hook keeps its figure; other slides have none");
 
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }

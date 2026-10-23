@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { errorMessage, logEvent } from "@/lib/logger";
 import { parseStart } from "@/lib/jobs/schedule";
 import { carouselProblem, clampSlideCount, parseFormat, slidesFromLines } from "@/lib/jobs/carousel";
+import type { SlideDesign } from "@/lib/jobs/design";
 import type { JobFormat, ResearchStyle } from "@/lib/jobs/states";
 import { parseResearchStyle } from "@/lib/jobs/quick";
 import { activeSkips, missingManual, normalizeManual, normalizeWorkflow, type ManualInputs, type Workflow } from "@/lib/jobs/workflow";
@@ -29,6 +30,7 @@ export const POST = adminRoute(async (req) => {
   let format: JobFormat;
   let slideCount = 0; // set only for a carousel
   let research: ResearchStyle;
+  let design: SlideDesign | undefined; // a carousel's look, kept with the job when it is created
   try {
     // Without a workflow in the request, the saved defaults apply.
     workflow = body?.workflow === undefined ? await loadWorkflow() : normalizeWorkflow(body.workflow);
@@ -37,7 +39,10 @@ export const POST = adminRoute(async (req) => {
     research = parseResearchStyle(body?.research); // missing means deep research, as before
     if (format === "carousel") {
       // Without a count in the request, the number saved in Settings applies.
-      slideCount = body?.slideCount === undefined ? (await loadCarousel()).slideCount : clampSlideCount(body.slideCount);
+      // The look is kept with the job, so a change in Settings later does not change a job already made.
+      const saved = await loadCarousel();
+      slideCount = body?.slideCount === undefined ? saved.slideCount : clampSlideCount(body.slideCount);
+      design = { shape: saved.shape, handle: saved.handle, footer: saved.footer };
     }
   } catch (err) {
     return json({ error: errorMessage(err) }, 400);
@@ -54,7 +59,7 @@ export const POST = adminRoute(async (req) => {
     }
   }
 
-  const data = format === "carousel" ? { workflow, manual, format, slideCount, research } : { workflow, manual, format, research };
+  const data = format === "carousel" ? { workflow, manual, format, slideCount, research, design } : { workflow, manual, format, research };
   const sql = await getDb();
   const [row] = await sql`
     insert into jobs (topic, scheduled_at, data)
