@@ -1229,6 +1229,21 @@ async function main() {
   assert.doesNotMatch(promptMod.SEARCH_PROMPT, /leave that fact out/, "the search no longer drops facts for lack of an address");
   ok("quick search: a reply without addresses says how many facts it listed; the search asks for a page per fact");
 
+  // ---------- quick search: addresses written in the forms Gemini uses ----------
+  const quickParse = await import("@/lib/jobs/quick");
+  const bare = quickParse.parseSearchReply('{"summary": "s", "points": [{"claim": "RAG retrieves documents before it generates text", "url": "en.wikipedia.org/wiki/Retrieval-augmented_generation", "title": "RAG"}]}');
+  assert.equal(bare.points[0].url, "https://en.wikipedia.org/wiki/Retrieval-augmented_generation", "a bare domain gets https in front");
+  const mdLink = quickParse.parseSearchReply('{"summary": "s", "points": [{"claim": "RAG grounds answers in retrieved text", "source": "[RAG - Wikipedia](https://en.wikipedia.org/wiki/RAG)"}]}');
+  assert.equal(mdLink.points[0].url, "https://en.wikipedia.org/wiki/RAG", "an address inside a markdown link is read");
+  const nested = quickParse.parseSearchReply('{"summary": "s", "points": [{"claim": "The RAG paper appeared in 2020", "citation": {"uri": "https://arxiv.org/abs/2005.11401"}}]}');
+  assert.equal(nested.points[0].url, "https://arxiv.org/abs/2005.11401", "an address in a nested field is read");
+  assert.throws(
+    () => quickParse.parseSearchReply('{"summary": "s", "points": [{"claim": "Fact text here long enough", "url": "Wikipedia"}]}'),
+    /The first fact was \{"claim":"Fact text here long enough","url":"Wikipedia"\}/,
+    "the first fact is shown as Gemini wrote it",
+  );
+  ok("quick search: addresses as bare domains, markdown links and nested fields are read; a missing one shows the first fact");
+
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }
 

@@ -39,16 +39,52 @@ function firstText(r: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-/** A web address from the item's own keys, or from a list of sources. Anything else is not an address. */
+/**
+ * A web address written in a string: a full https address, one inside a markdown link, or a bare domain such as
+ * en.wikipedia.org/wiki/Topic, which gets https:// in front. Returns "" when there is none.
+ */
+function addressIn(value: string): string {
+  const md = value.match(/\]\((https?:\/\/[^)\s]+)\)/);
+  const candidate = (md ? md[1] : value).trim().replace(/^<|>$/g, "").replace(/[.,;:]+$/, "");
+  const full = /^https?:\/\//i.test(candidate)
+    ? candidate
+    : /^[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(candidate)
+      ? `https://${candidate}`
+      : "";
+  return full && isWebAddress(full) ? full : "";
+}
+
+/**
+ * A web address from the item: its own address keys, a list of sources, or any text in the item that holds one.
+ * Anything else is not an address.
+ */
 function firstWebUrl(r: Record<string, unknown>): string {
   for (const k of URL_KEYS) {
     const v = r[k];
-    if (typeof v === "string" && isWebAddress(v.trim())) return v.trim();
+    if (typeof v === "string") {
+      const u = addressIn(v);
+      if (u) return u;
+    }
   }
   if (Array.isArray(r.sources)) {
     for (const s of r.sources) {
-      const u = typeof s === "string" ? s.trim() : s && typeof s === "object" ? firstText(s as Record<string, unknown>, URL_KEYS) : "";
-      if (isWebAddress(u)) return u;
+      const u = typeof s === "string" ? addressIn(s) : s && typeof s === "object" ? firstWebUrl(s as Record<string, unknown>) : "";
+      if (u) return u;
+    }
+  }
+  for (const v of Object.values(r)) {
+    const texts: string[] =
+      typeof v === "string"
+        ? [v]
+        : v && typeof v === "object" && !Array.isArray(v)
+          ? Object.values(v as Record<string, unknown>).filter((x): x is string => typeof x === "string")
+          : [];
+    for (const t of texts) {
+      const m = t.match(URL_IN_TEXT);
+      if (m) {
+        const u = addressIn(m[0]);
+        if (u) return u;
+      }
     }
   }
   return "";
@@ -106,7 +142,9 @@ export function parseSearchReply(text: string): QuickSearch {
     // The start of the reply is shown, and how many facts it listed, so the cause can be seen without a log.
     const sample = text.replace(/\s+/g, " ").trim().slice(0, 300) || "(empty reply)";
     const listed = LIST_KEYS.map((k) => d[k]).find(Array.isArray) as unknown[] | undefined;
-    const count = listed ? `It listed ${listed.length} fact(s), none with a web address.` : "It listed no facts.";
+    // The first fact as Gemini wrote it, so the form of its address can be seen in the log.
+    const first = listed?.length ? ` The first fact was ${JSON.stringify(listed[0]).slice(0, 200)}.` : "";
+    const count = listed ? `It listed ${listed.length} fact(s), none with a web address.${first}` : "It listed no facts.";
     throw new Error(
       `The search gave no facts with web addresses. ${count} Gemini replied: "${sample}". Retry the job, or use deep research.`,
     );
