@@ -76,11 +76,12 @@ Return ONLY a JSON object:
 {"pass": true or false, "issues": ["one short sentence per problem"], "revisedPrompt": "a complete improved image prompt under 400 characters that fixes the problems and describes only the picture, with no logo, watermark or text (only when pass is false, otherwise an empty string)"}
 Do not write anything outside the JSON.`;
 
-export const SEARCH_PROMPT = `Give correct, well-established facts about the topic below, each with a source that states it.
+export const SEARCH_PROMPT = `Give correct, well-established facts about the topic below. Each fact needs the web address of a page that states it.
 Return ONLY a JSON object with exactly these keys:
 - "summary": two or three sentences on the topic.
-- "points": 6 to 8 objects. Each has "claim" (one specific, verifiable fact in one sentence, no opinion), "url" (the full https address of a real page that states this fact) and "title" (the page's title).
-Source rules: prefer the most stable pages, such as Wikipedia articles, official documentation, university or government pages, and arXiv or DOI paper pages. Only include a fact when you are confident it is true and that page states it. Never invent an address. If you are not sure of the address for a fact, leave that fact out.
+- "points": 5 to 8 objects. Each has "claim" (one specific, verifiable fact in one sentence, no opinion), "url" (the full https address of a page that states this fact) and "title" (the page's title).
+Every point must have a "url". Use stable pages that are likely to exist and to say the fact: the Wikipedia article for the topic (https://en.wikipedia.org/wiki/ followed by the article title, with spaces replaced by underscores), official documentation, university or government pages, arXiv or DOI paper pages. Use a different page where you can.
+The app opens every page and checks each fact against its text, and drops any fact the page does not support. So give the best address you know for each fact; an address you are not certain of is still useful. Do not invent facts.
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
 
 Topic: {topic}

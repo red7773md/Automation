@@ -103,10 +103,12 @@ export function parseSearchReply(text: string): QuickSearch {
   if (!points.length) points = pointsFromText(text);
   points = points.slice(0, QUICK_MAX_POINTS);
   if (!points.length) {
-    // The start of the reply is shown, so the cause can be seen without a log.
+    // The start of the reply is shown, and how many facts it listed, so the cause can be seen without a log.
     const sample = text.replace(/\s+/g, " ").trim().slice(0, 300) || "(empty reply)";
+    const listed = LIST_KEYS.map((k) => d[k]).find(Array.isArray) as unknown[] | undefined;
+    const count = listed ? `It listed ${listed.length} fact(s), none with a web address.` : "It listed no facts.";
     throw new Error(
-      `The search gave no facts with web addresses. Gemini replied: "${sample}". Retry the job, or use deep research.`,
+      `The search gave no facts with web addresses. ${count} Gemini replied: "${sample}". Retry the job, or use deep research.`,
     );
   }
   return { summary: String(d.summary ?? "").trim().slice(0, 600), points };

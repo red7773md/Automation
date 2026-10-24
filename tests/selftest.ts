@@ -1213,6 +1213,22 @@ async function main() {
   assert.ok(!figured.slides[0].imagePrompt.includes("3x"), "the figure is drawn by the app, not in the picture");
   ok("carousel plan: the hook keeps its figure; other slides have none");
 
+  // ---------- quick search: a reply with no web addresses says what it listed ----------
+  const quickMod = await import("@/lib/jobs/quick");
+  assert.throws(
+    () => quickMod.parseSearchReply('{"summary": "RAG adds retrieved text to a prompt.", "points": []}'),
+    /listed 0 fact\(s\), none with a web address/,
+    "an empty list is reported as such, with the start of the reply",
+  );
+  assert.throws(
+    () => quickMod.parseSearchReply('{"summary": "x", "points": [{"claim": "A fact with no address at all"}]}'),
+    /listed 1 fact\(s\), none with a web address/,
+  );
+  const promptMod = await import("@/lib/adapters/prompts");
+  assert.match(promptMod.SEARCH_PROMPT, /en\.wikipedia\.org\/wiki\//, "the search asks for a page for each fact");
+  assert.doesNotMatch(promptMod.SEARCH_PROMPT, /leave that fact out/, "the search no longer drops facts for lack of an address");
+  ok("quick search: a reply without addresses says how many facts it listed; the search asks for a page per fact");
+
   console.log(`\nALL ${passed} SELF-TESTS PASSED`);
 }
 
