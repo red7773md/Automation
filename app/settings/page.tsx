@@ -327,9 +327,6 @@ function WorkflowCard() {
       <p className="muted" style={{ margin: 0 }}>
         Choose the step to skip by default, or none. New jobs start with this choice, and the new job form can change it for a single job.
       </p>
-      {draft.skipApproval && (
-        <p className="banner">With Skip my approval on, a job posts to Instagram as soon as its check passes, without your review.</p>
-      )}
       <SkipPicker steps={data.workflowSwitches} value={draft} onChange={setDraft} />
       <div className="row">
         <button className="primary" disabled={busy || !changed} onClick={save}>

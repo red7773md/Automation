@@ -2,7 +2,7 @@ import { adminRoute, json } from "@/lib/api";
 import { getDb } from "@/lib/db";
 import { errorMessage, logEvent } from "@/lib/logger";
 import { parseStart } from "@/lib/jobs/schedule";
-import { carouselProblem, clampSlideCount, parseFormat, slidesFromLines } from "@/lib/jobs/carousel";
+import { clampSlideCount, parseFormat, slidesFromLines } from "@/lib/jobs/carousel";
 import type { SlideDesign } from "@/lib/jobs/design";
 import type { JobFormat, ResearchStyle } from "@/lib/jobs/states";
 import { parseResearchStyle } from "@/lib/jobs/quick";
@@ -47,8 +47,6 @@ export const POST = adminRoute(async (req) => {
   } catch (err) {
     return json({ error: errorMessage(err) }, 400);
   }
-  const problem = carouselProblem(format, workflow);
-  if (problem) return json({ error: problem }, 400);
   const missing = missingManual(workflow, manual, format);
   if (missing) return json({ error: missing }, 400);
   if (format === "carousel" && workflow.skipAnalysis) {

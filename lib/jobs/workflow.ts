@@ -1,35 +1,25 @@
 // Per-job workflow switches and the content typed in by hand. This file has no database
 // code, so the browser can import the labels as well.
+//
+// Your pictures are not generated: you make them by hand (for example in ChatGPT) and upload them on the
+// job page. So the switches are only the steps that can be skipped, and the picture step is always yours.
 
 import type { JobFormat } from "./states";
 
-export const WORKFLOW_KEYS = [
-  "skipResearch",
-  "skipAnalysis",
-  "skipImage",
-  "skipVerify",
-  "skipCaption",
-  "skipApproval",
-] as const;
+export const WORKFLOW_KEYS = ["skipResearch", "skipAnalysis", "skipCaption"] as const;
 export type WorkflowKey = (typeof WORKFLOW_KEYS)[number];
 export type Workflow = Record<WorkflowKey, boolean>;
 
 export const WORKFLOW_LABEL: Record<WorkflowKey, string> = {
   skipResearch: "Research (paste the report yourself)",
-  skipAnalysis: "Analysis (write the image prompt yourself)",
-  skipImage: "Image generation (upload the picture yourself)",
-  skipVerify: "Image check",
+  skipAnalysis: "Analysis (write the image prompts yourself)",
   skipCaption: "Caption and pinned comment (write them yourself)",
-  skipApproval: "Your approval (post as soon as the check passes)",
 };
 
 export const WORKFLOW_HINT: Record<WorkflowKey, string> = {
   skipResearch: "The job starts at the analysis with the report you paste in.",
-  skipAnalysis: "No separate Gemini chat. You give the image prompt, and optionally the analysis text.",
-  skipImage: "The job waits at the image step. Upload the picture on the job page.",
-  skipVerify: "The image goes straight to the caption, with no Gemini check.",
+  skipAnalysis: "No separate Gemini chat. You give the image prompt (one per slide for a carousel), and optionally the analysis text.",
   skipCaption: "No caption request. You give the caption and the pinned comment text.",
-  skipApproval: "Posts without waiting. If the image check fails twice, the job still stops for you.",
 };
 
 export const MANUAL_LIMITS = {

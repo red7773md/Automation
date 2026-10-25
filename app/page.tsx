@@ -81,10 +81,10 @@ function boxesFor(switchId: string, format: Format): TextBox[] {
   return (format === "carousel" ? CAROUSEL_TEXT[switchId] : undefined) ?? TEXT_FOR[switchId] ?? [];
 }
 
-/** A carousel makes one picture per slide, so skipping image generation does not apply to it. */
+/** A carousel asks for one prompt per slide, so its analysis step has its own wording. */
 function stepsFor(steps: StepOption[], format: Format): StepOption[] {
   if (format !== "carousel") return steps;
-  return steps.filter((s) => s.id !== "skipImage").map((s) => ({ ...s, ...CAROUSEL_STEP_TEXT[s.id] }));
+  return steps.map((s) => ({ ...s, ...CAROUSEL_STEP_TEXT[s.id] }));
 }
 
 /** Only the text boxes of switches that are on are sent, so text left in a hidden box is not stored. */
@@ -165,8 +165,6 @@ export default function Dashboard() {
 
   function chooseFormat(next: Format) {
     setFormat(next);
-    // A carousel cannot skip image generation, so that switch goes off when a carousel is chosen.
-    if (next === "carousel") setWf((w) => ({ ...w, skipImage: false }));
   }
 
   async function create(e: FormEvent) {
@@ -353,7 +351,7 @@ export default function Dashboard() {
               {creating ? "Starting…" : format === "carousel" ? "Start carousel" : "Start job"}
             </button>
             <span className="muted">
-              {wf.skipApproval ? "Posts as soon as its check passes, with no review from you." : "You approve before anything is posted."}
+              You make the pictures from their prompts and upload them on the job page. Continue then posts it, or you can schedule it.
             </span>
           </div>
           {error && <p className="error">{error}</p>}

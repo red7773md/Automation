@@ -21,25 +21,21 @@ export const STATE_LABEL: Record<State, string> = {
   queued: "Waiting to start",
   researching: "Research (Gemini)",
   analyzing: "Analysis in a new Gemini chat",
-  generating: "Image (Gemini)",
-  verifying: "Image check (Gemini)",
+  generating: "Your pictures (you upload them)",
+  verifying: "Image check (Gemini, older jobs)",
   captioning: "Caption, hashtags and pinned comment (Gemini)",
-  awaiting_review: "Waiting for your approval",
+  awaiting_review: "Waiting for your approval (older jobs)",
   publishing: "Publishing (Instagram)",
   done: "Posted",
   failed: "Failed",
 };
 
-/** Steps the runner can advance without a human. */
-export const RUNNABLE: readonly State[] = [
-  "queued",
-  "researching",
-  "analyzing",
-  "generating",
-  "verifying",
-  "captioning",
-  "publishing",
-];
+/**
+ * Steps the runner advances without a human. A job waiting for its pictures ("generating") is not one of them:
+ * it waits until every picture is uploaded and you press Continue. "verifying" and "awaiting_review" only remain
+ * for jobs made before the change.
+ */
+export const RUNNABLE: readonly State[] = ["queued", "researching", "analyzing", "verifying", "captioning", "publishing"];
 
 /** Timeline order shown in the UI. */
 export const TIMELINE: readonly State[] = [
@@ -47,30 +43,22 @@ export const TIMELINE: readonly State[] = [
   "researching",
   "analyzing",
   "generating",
-  "verifying",
   "captioning",
-  "awaiting_review",
   "publishing",
   "done",
 ];
 
-/** One correction only: generate → verify → (fail) → generate again → verify → (fail) → human review. */
-export const MAX_GENERATIONS = 2;
-
 /** A post is one picture. A carousel is one picture per slide, posted together as one album. */
 export type JobFormat = "post" | "carousel";
 
-/** One slide's picture. `pass` stays unset until the slide has been checked. */
+/** One slide's picture, as uploaded. `pass` and `issues` are only set on jobs made before the check was removed. */
 export type SlideImage = {
   attempt: number; // the job attempt that made the picture; the stored path and the link use it
   path: string; // where the picture is kept in private storage
-  tries: number; // how many times this slide has been made
+  tries: number; // how many pictures were uploaded for this slide
   pass?: boolean;
   issues?: string[];
 };
-
-/** What the next try of one slide should change: the problems found, and possibly a new prompt. */
-export type SlideFix = { index: number; notes: string[]; imagePrompt?: string };
 
 /** Deep research (slow, thorough) or a quick search whose facts are checked against their pages. */
 export type ResearchStyle = "deep" | "quick";
@@ -94,17 +82,17 @@ export type JobData = {
   reportPath?: string; // the report saved as a Markdown file in Blob storage
   workflow?: Workflow; // the switches this job was created with
   manual?: ManualInputs; // text typed in by hand for the switched-off steps
-  uploadedDraftPath?: string; // an image uploaded while the job waits for one (skip image generation)
   analysis?: string; // Gemini's analysis of the report, written in a new chat
-  imagePrompt?: string; // image prompt suggested by the analysis
+  imagePrompt?: string; // the picture prompt (a carousel: one numbered line per slide)
   plan?: Plan; // caption with hashtags, pinned-comment text and the image prompt
-  nextPrompt?: string | null;
+  nextPrompt?: string | null; // older jobs only
   lastPrompt?: string;
-  draftPath?: string;
-  verdict?: Verdict | null;
+  draftPath?: string; // a single post: its uploaded picture
+  verdict?: Verdict | null; // older jobs only: the picture check
   reviewFeedback?: string;
   approvedAt?: string;
-  autoPost?: boolean; // post without waiting for approval when the image check passes
+  manualContinue?: boolean; // Continue was pressed: the caption is written and the post goes out, at the time chosen if any
+  continuedAt?: string;
   failedStep?: State;
   publish?: PublishProgress;
   publishedAt?: string;
@@ -112,9 +100,7 @@ export type JobData = {
   slideCount?: number; // carousel: the number of slides chosen for this job
   design?: SlideDesign; // carousel: picture shape, account name and footer, as they were when the job was created
   carousel?: CarouselPlan; // carousel: the analysis, the shared style and the slides in swipe order
-  slideImages?: SlideImage[]; // carousel: one entry per slide, in order, as far as they have been made
-  slideIndex?: number; // carousel: the slide being made or checked now
-  slideFix?: SlideFix | null; // carousel: what to change the next time this slide is made
+  slideImages?: (SlideImage | null)[]; // carousel: one entry per slide, null until its picture is uploaded
   research?: ResearchStyle; // a missing style means deep research
   quick?: QuickData; // quick research: the search, the page checks and what was kept
   transientTries?: number; // temporary problems in a row for the current step; reset when a step succeeds

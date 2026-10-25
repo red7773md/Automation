@@ -1,23 +1,22 @@
 // The pipeline. Each call performs exactly one step and returns the next state.
-// Order: research → analysis (a separate Gemini chat) → image → image check →
-// caption, hashtags and pinned comment → approval. A switched-off step is skipped and
-// the job moves on: the text or image typed in by hand takes its place. With auto-post
-// on (or Skip approval) and a passed check, the post goes out right after the caption.
+// Order: research → analysis (a separate Gemini chat, which writes the picture prompts) → your pictures →
+// caption, hashtags and pinned comment → post. The pictures are made by hand (for example in ChatGPT) and
+// uploaded on the job page; nothing here generates them. Continue on the job page starts the caption and the
+// post, now or at the time you chose. A switched-off step is skipped and the job moves on: the text typed in
+// by hand takes its place.
 import { providers } from "@/lib/adapters";
 import type { Plan } from "@/lib/adapters/types";
 import { REPORT_FILE } from "@/lib/adapters/prompts";
-import { draftPath, readDraft, reportPath, saveDraft } from "@/lib/blob";
-import { isSendable, shrinkForSending } from "@/lib/images";
+import { reportPath, saveDraft } from "@/lib/blob";
 import { publicMediaUrl } from "@/lib/media";
 import { defaultModels, type ModelSettings } from "@/lib/settings";
 import { normalizeWorkflow, type Workflow } from "./workflow";
-import { MAX_GENERATIONS, type JobRow, type State } from "./states";
-import { analyzeCarousel, composeCarousel, generateSlide, verifySlide } from "./carousel-steps";
+import type { JobRow, State } from "./states";
+import { analyzeCarousel, composeCarousel } from "./carousel-steps";
 import { quickResearch } from "./quick-steps";
 import { withSources } from "./quick";
 import { COMMENT_TOTAL_LIMIT, splitComment } from "./comments";
-
-const kb = (bytes: number) => (bytes / 1024).toFixed(0);
+import { missingPictures } from "./pictures";
 
 export type StepResult = {
   state: State;
@@ -61,13 +60,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
   const d = job.data;
   const wf: Workflow = normalizeWorkflow(d.workflow);
   const manual = d.manual ?? {};
-
-  // A carousel has its own analysis, pictures and check. Research and the caption are shared with a single post.
-  if ((d.format ?? "post") === "carousel") {
-    if (job.state === "analyzing") return analyzeCarousel(job, wf, models);
-    if (job.state === "generating") return generateSlide(job, wf, models);
-    if (job.state === "verifying") return verifySlide(job, wf, models);
-  }
+  const isCarousel = (d.format ?? "post") === "carousel";
 
   switch (job.state) {
     case "queued": {
@@ -121,6 +114,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
     }
 
     case "analyzing": {
+      if (isCarousel) return analyzeCarousel(job, wf, models);
       if (!d.report) throw new Error("No research report stored. Retry from the research step.");
       if (wf.skipAnalysis) {
         const imagePrompt = (manual.imagePrompt ?? "").trim();
@@ -128,8 +122,8 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
         const analysis = (manual.analysis ?? d.report.slice(0, ANALYSIS_EXCERPT)).trim();
         return {
           state: "generating",
-          data: { analysis, imagePrompt, report: null, nextPrompt: null },
-          note: `Analysis skipped. Your image prompt is used, with ${manual.analysis ? "your analysis text" : "the start of the report as the analysis"}.`,
+          data: { analysis, imagePrompt, report: null },
+          note: `Analysis skipped. Your image prompt is used, with ${manual.analysis ? "your analysis text" : "the start of the report as the analysis"}. Make the picture and upload it on the job page.`,
         };
       }
       const a = await p.gemini.analyze({ topic: job.topic, report: d.report, model: models.analysis });
@@ -138,101 +132,41 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       }
       return {
         state: "generating",
-        data: { analysis: a.analysis.trim(), imagePrompt: a.imagePrompt.trim(), report: null, nextPrompt: null },
+        data: { analysis: a.analysis.trim(), imagePrompt: a.imagePrompt.trim(), report: null },
         note: `Analysis ready from a separate Gemini chat (${a.analysis.length.toLocaleString()} characters). The report was ${
           a.reportVia === "attached"
             ? `attached as ${REPORT_FILE}`
             : "pasted into the prompt, because the Gemini server does not take file attachments yet"
-        }`,
+        }. Make the picture from its prompt and upload it on the job page.`,
         detail: { imagePrompt: a.imagePrompt },
       };
     }
 
     case "generating": {
-      if (wf.skipImage) {
-        // Nothing to generate: wait until an image is uploaded on the job page. Each poll is quiet.
-        if (!d.uploadedDraftPath) {
-          return { state: "generating", pending: true, quiet: true, note: "Waiting for your image upload" };
-        }
-        const attempt = job.attempts + 1;
-        return {
-          state: "verifying",
-          attempts: attempt,
-          data: { draftPath: d.uploadedDraftPath, uploadedDraftPath: null, lastPrompt: "uploaded by you", nextPrompt: null },
-          note: `Image uploaded by you (attempt ${attempt}), used as the draft`,
-        };
-      }
-      const attempt = job.attempts + 1;
-      const prompt = d.nextPrompt || d.imagePrompt;
-      if (!prompt) throw new Error("No image prompt stored. Retry from the analysis step.");
-      const image =
-        process.env.IMAGE_PROVIDER === "chatgpt"
-          ? await p.chatgpt.generateImage(prompt)
-          : await p.gemini.generateImage(prompt, models.image);
-      const shrunk = await shrinkForSending(image.bytes);
-      const path = await saveDraft(draftPath(job.id, attempt), shrunk.bytes, shrunk.contentType);
-      return {
-        state: "verifying",
-        attempts: attempt,
-        data: { draftPath: path, lastPrompt: prompt, nextPrompt: null },
-        note: `Image generated (attempt ${attempt} of ${MAX_GENERATIONS}): ${kb(image.bytes.length)} KB original, saved as ${kb(shrunk.bytes.length)} KB JPEG ${shrunk.width}×${shrunk.height}, privately`,
-        detail: { prompt },
-      };
+      // Your pictures are made by hand and uploaded on the job page. Nothing runs here: Continue starts the caption.
+      return { state: "generating", pending: true, quiet: true, note: "Waiting for your pictures" };
     }
 
     case "verifying": {
-      if (wf.skipVerify) {
-        return {
-          state: "captioning",
-          data: { verdict: { pass: true, issues: [], skipped: true } },
-          note: "Image check skipped (your setting).",
-        };
-      }
-      if (!d.draftPath) throw new Error("No image stored. Retry from the image step.");
-      const stored = await readDraft(d.draftPath);
-      // Drafts made before the resize step can be large PNGs. Shrink them now and
-      // save the small copy, so the check and the post both use the same file.
-      let image = stored;
-      let prefix = "";
-      if (!isSendable(stored.bytes, stored.contentType)) {
-        const shrunk = await shrinkForSending(stored.bytes);
-        await saveDraft(d.draftPath, shrunk.bytes, shrunk.contentType);
-        image = { bytes: shrunk.bytes, contentType: shrunk.contentType };
-        prefix = `Image resized from ${kb(stored.bytes.length)} KB to ${kb(shrunk.bytes.length)} KB before the check. `;
-      }
-      const verdict = await p.gemini.verifyImage({
-        topic: job.topic,
-        imagePrompt: d.lastPrompt ?? d.imagePrompt ?? "",
-        image: image.bytes,
-        mimeType: image.contentType,
-        attempt: job.attempts,
-        model: models.verify,
-      });
-      const issues = verdict.issues.length ? verdict.issues.join("; ") : "no issues listed";
-
-      if (verdict.pass) {
-        return { state: "captioning", data: { verdict }, note: `${prefix}Image check passed.`, detail: verdict };
-      }
-      if (job.attempts < MAX_GENERATIONS) {
-        const nextPrompt = verdict.revisedPrompt ?? `${d.imagePrompt ?? ""}\n\nFix these problems: ${issues}`;
-        return {
-          state: "generating",
-          data: { verdict, nextPrompt },
-          note: `${prefix}Image check failed (${issues}). Running the one allowed correction.`,
-          detail: verdict,
-        };
-      }
+      // The Gemini picture check has left the workflow. A job that was still in it goes on to the caption.
       return {
         state: "captioning",
-        data: { verdict },
-        note: `${prefix}Image check failed again after ${job.attempts} attempts (${issues}). You decide at approval.`,
-        detail: verdict,
+        data: { verdict: { pass: true, issues: [], skipped: true } },
+        note: "The Gemini picture check no longer runs. Going on to the caption.",
       };
     }
 
     case "captioning": {
-      // A carousel's pictures get their text here, once every slide is checked. The checked pictures are kept as they are.
-      const slidesDone = (d.format ?? "post") === "carousel" ? await composeCarousel(job) : 0;
+      // Every picture must be uploaded before the caption. A job that gets here without them waits for them.
+      const missing = missingPictures(d);
+      if (missing.length) {
+        return {
+          state: "generating",
+          note: `Waiting for your pictures: ${missing.map((i) => i + 1).join(", ")} still to upload`,
+        };
+      }
+      // A carousel's pictures get their text here. The uploaded pictures are kept as they are.
+      const slidesDone = isCarousel ? await composeCarousel(job) : 0;
       let plan: Plan;
       if (wf.skipCaption) {
         plan = normalizePlan({ caption: manual.caption, commentBody: manual.commentBody, imagePrompt: d.imagePrompt ?? "" });
@@ -243,13 +177,13 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       }
       // A quick research job puts its sources at the end of the pinned comment, so readers can check the facts.
       if (d.quick?.cited?.length) plan = { ...plan, commentBody: withSources(plan.commentBody, d.quick.cited) };
-      // A failed check twice still stops for you, even with approval skipped.
-      const post = (wf.skipApproval || d.autoPost === true) && d.verdict?.pass === true;
+      // Continue on the job page is the go-ahead, so the post goes out next. Jobs made before that still wait for approval.
+      const post = d.manualContinue === true;
       return {
         state: post ? "publishing" : "awaiting_review",
         data: { plan },
         note: `${slidesDone ? `Text drawn on ${slidesDone} slides. ` : ""}${wf.skipCaption ? "Caption written by you" : "Caption ready"} (${plan.caption.length} characters with hashtags), pinned comment ${plan.commentBody.length} characters in ${splitComment(plan.commentBody).length} comment(s). ${
-          post ? "Posting now without your approval." : "Waiting for your approval."
+          post ? "Going on to the post." : "Waiting for your approval."
         }`,
       };
     }
@@ -261,14 +195,17 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       const pub = { ...(d.publish ?? {}) };
 
       // Each sub-step is saved before the next one runs, so a retry never posts the photo twice.
-      if (!pub.mediaId && (d.format ?? "post") === "carousel") {
+      if (!pub.mediaId && isCarousel) {
         // One album post with the slides in order. Each picture has its own signed link for its slide.
         const slides = d.slideImages ?? [];
         const planned = d.carousel?.slides.length ?? 0;
-        if (!planned || slides.length !== planned) {
-          throw new Error(`The carousel has ${slides.length} of ${planned} pictures. Retry from the image step.`);
+        if (!planned) throw new Error("No carousel plan stored. Retry from the analysis step.");
+        const imageUrls: string[] = [];
+        for (let i = 0; i < planned; i++) {
+          const img = slides[i];
+          if (!img) throw new Error(`No picture stored for slide ${i + 1}. Upload it on the job page.`);
+          imageUrls.push(dryRun ? "mock://draft" : publicMediaUrl(job.id, img.attempt, i));
         }
-        const imageUrls = slides.map((img, i) => (dryRun ? "mock://draft" : publicMediaUrl(job.id, img.attempt, i)));
         const album = await p.instagram.postAlbum({ imageUrls, caption: plan.caption, aspect: d.design?.shape ?? "square" });
         return {
           state: "publishing",

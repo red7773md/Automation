@@ -2,14 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client";
-import {
-  MAX_GENERATIONS,
-  RUNNABLE,
-  STATE_LABEL,
-  TIMELINE,
-  type JobRow,
-  type State,
-} from "@/lib/jobs/states";
+import { RUNNABLE, STATE_LABEL, TIMELINE, type JobRow, type State } from "@/lib/jobs/states";
+import { missingPictures } from "@/lib/jobs/pictures";
 import { WORKFLOW_KEYS, WORKFLOW_LABEL, type WorkflowKey } from "@/lib/jobs/workflow";
 
 type LogRow = {
@@ -30,18 +24,15 @@ const TONE: Partial<Record<State, string>> = { awaiting_review: "warn", done: "o
 const SKIP_STEP: Partial<Record<WorkflowKey, State>> = {
   skipResearch: "researching",
   skipAnalysis: "analyzing",
-  skipImage: "generating",
-  skipVerify: "verifying",
   skipCaption: "captioning",
-  skipApproval: "awaiting_review",
 };
 
-// The job waits for a picture: image generation is switched off and nothing was uploaded yet.
-function waitsForUpload(j: JobRow): boolean {
-  return j.state === "generating" && j.data.workflow?.skipImage === true && !j.data.uploadedDraftPath;
-}
+// Jobs made before the Gemini picture check was removed: the step they are on is shown at the step that replaced it.
+const LEGACY_STEP: Partial<Record<State, State>> = { verifying: "generating", awaiting_review: "captioning" };
 
-const UPLOAD_MAX_SIDE = 1080; // the server resizes again; this keeps the upload small
+const ROLE_LABEL = { hook: "Hook", point: "Point", cta: "Call to action" } as const;
+
+const UPLOAD_MAX_SIDE = 2048; // a ChatGPT picture is about 1024 to 1536 pixels; the server resizes it again
 const UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Vercel refuses request bodies over about 4.5 MB
 
 async function resizeForUpload(file: File): Promise<Blob> {
@@ -68,23 +59,44 @@ async function resizeForUpload(file: File): Promise<Blob> {
   throw new Error("This picture is too large to send, even after resizing.");
 }
 
-function ImageUpload({ jobId, onDone }: { jobId: string; onDone: () => void }) {
+/** One picture to make: its prompt, and for a carousel the slide's text it goes with. */
+type Picture = { label: string; detail?: string; prompt: string };
+
+function picturesOf(j: JobRow): Picture[] {
+  if ((j.data.format ?? "post") !== "carousel") {
+    return [{ label: "Picture", prompt: j.data.imagePrompt ?? j.data.plan?.imagePrompt ?? "" }];
+  }
+  return (j.data.carousel?.slides ?? []).map((s, i) => ({
+    label: `${i + 1}. ${ROLE_LABEL[s.role]}`,
+    detail: [s.figure, s.headline].filter(Boolean).join(" · ") || undefined,
+    prompt: s.imagePrompt,
+  }));
+}
+
+/** The address of a picture as the server keeps it. The timestamp makes a re-upload show at once. */
+function pictureSrc(j: JobRow, i: number): string {
+  const v = encodeURIComponent(j.updated_at);
+  return (j.data.format ?? "post") === "carousel" ? `/api/jobs/${j.id}/draft?slide=${i}&v=${v}` : `/api/jobs/${j.id}/draft?v=${v}`;
+}
+
+/** Continue, or schedule the post for a time. Available once every picture is uploaded. */
+function ContinueBox({ jobId, missing, onDone }: { jobId: string; missing: number[]; onDone: () => void }) {
+  const [when, setWhen] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ready = missing.length === 0;
 
-  async function send(file: File) {
+  async function send(scheduled: boolean) {
     setBusy(true);
     setError(null);
     try {
-      const picture = await resizeForUpload(file);
-      const res = await fetch(`/api/jobs/${jobId}/image`, {
-        method: "POST",
-        headers: { "content-type": "image/jpeg" },
-        body: picture,
-        cache: "no-store",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `Upload failed (HTTP ${res.status})`);
+      let at: string | undefined;
+      if (scheduled) {
+        const time = new Date(when);
+        if (!when || Number.isNaN(time.getTime())) throw new Error("Choose the time to post.");
+        at = time.toISOString();
+      }
+      await api("POST", `/api/jobs/${jobId}/continue`, at ? { at } : {});
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -94,77 +106,138 @@ function ImageUpload({ jobId, onDone }: { jobId: string; onDone: () => void }) {
   }
 
   return (
-    <section className="card stack">
-      <h2 style={{ margin: 0 }}>Upload the image</h2>
+    <div className="stack">
       <p className="muted" style={{ margin: 0 }}>
-        Image generation is skipped for this job, so the job waits here. Upload the picture to post. It is resized before the check.
+        {ready
+          ? "Every picture is uploaded. Continue writes the caption, the hashtags and the pinned comment, then posts. Or choose a time to post later."
+          : `Upload the remaining pictures first: ${missing.map((i) => i + 1).join(", ")}.`}
       </p>
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        disabled={busy}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) void send(file);
-        }}
-      />
-      {busy && <span className="muted">Uploading…</span>}
+      <div className="row">
+        <button className="primary" disabled={!ready || busy} onClick={() => send(false)}>
+          Continue and post now
+        </button>
+      </div>
+      <div className="row">
+        <input
+          type="datetime-local"
+          value={when}
+          disabled={!ready || busy}
+          onChange={(e) => setWhen(e.target.value)}
+          style={{ width: "auto" }}
+        />
+        <button disabled={!ready || busy || !when} onClick={() => send(true)}>
+          Schedule the post
+        </button>
+      </div>
       {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * The pictures to make, one at a time: each prompt with a copy button, and an upload button for its picture.
+ * Uploads are one at a time, so two pictures cannot overwrite each other's place in the job.
+ */
+function PicturesPanel({ job, onChanged }: { job: JobRow; onChanged: () => void }) {
+  const pictures = picturesOf(job);
+  const missing = missingPictures(job.data);
+  const isCarousel = (job.data.format ?? "post") === "carousel";
+  const [uploading, setUploading] = useState<number | null>(null);
+  const [copied, setCopied] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function upload(slot: number, file: File) {
+    setUploading(slot);
+    setError(null);
+    try {
+      const picture = await resizeForUpload(file);
+      const res = await fetch(`/api/jobs/${job.id}/image?slot=${slot}`, {
+        method: "POST",
+        headers: { "content-type": "image/jpeg" },
+        body: picture,
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Upload failed (HTTP ${res.status})`);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  async function copy(slot: number, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(slot);
+      setTimeout(() => setCopied((c) => (c === slot ? null : c)), 1500);
+    } catch {
+      setError("Clipboard is blocked in this browser. Select the prompt text and copy it by hand.");
+    }
+  }
+
+  return (
+    <section className="card stack">
+      <h2 style={{ margin: 0 }}>{isCarousel ? `Make and upload the ${pictures.length} pictures` : "Make and upload the picture"}</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        Copy each prompt into ChatGPT, make the picture, then upload it under its prompt. The pictures should contain no
+        text: the app writes the slide text over them. Uploading again replaces a picture.
+      </p>
+      {pictures.map((p, i) => {
+        const done = !missing.includes(i);
+        return (
+          <div key={i} className="stack" style={{ gap: 8 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>
+                {p.label}
+                {p.detail && <span className="muted"> · {p.detail}</span>}
+              </strong>
+              <span className={`badge ${done ? "ok" : "warn"}`}>{done ? "Uploaded" : "Waiting for the picture"}</span>
+            </div>
+            <pre className="block">{p.prompt || "(no prompt)"}</pre>
+            <div className="row">
+              <button disabled={!p.prompt} onClick={() => copy(i, p.prompt)}>
+                {copied === i ? "Copied" : "Copy prompt"}
+              </button>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                disabled={uploading !== null}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void upload(i, file);
+                }}
+              />
+              {uploading === i && <span className="muted">Uploading…</span>}
+            </div>
+            {done && <img src={pictureSrc(job, i)} alt={`Picture ${i + 1}`} style={{ maxWidth: 240, borderRadius: 8 }} />}
+          </div>
+        );
+      })}
+      {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
+      <ContinueBox jobId={job.id} missing={missing} onDone={onChanged} />
     </section>
   );
 }
 
-const ROLE_LABEL = { hook: "Hook", point: "Point", cta: "Call to action" } as const;
-
-/**
- * One card per slide, in swipe order. Each card shows its picture once it is made, and what the
- * slide is doing now. Only the slide being made or checked is marked as running.
- */
-function SlideStrip({ jobId, job }: { jobId: string; job: JobRow }) {
-  const plan = job.data.carousel;
-  if (!plan) return <span className="muted">The slides are planned when the analysis finishes.</span>;
-  const images = job.data.slideImages ?? [];
-  const current = job.data.slideIndex ?? 0;
-  const running = job.state === "generating" || job.state === "verifying";
+/** The pictures once they are made: their uploads and, for a carousel, the text drawn over them. */
+function PictureGallery({ job }: { job: JobRow }) {
+  const pictures = picturesOf(job);
+  const missing = new Set(missingPictures(job.data));
+  if (pictures.length === 0) return null;
   return (
     <div className="slides">
-      {plan.slides.map((s, i) => {
-        const img = images[i];
-        const here = running && i === current;
-        let status = "Waiting";
-        let tone = "";
-        if (img?.pass === true) {
-          status = "Passed the check";
-          tone = "ok";
-        } else if (img?.pass === false) {
-          status = here ? "Making it again" : "Failed the check";
-          tone = here ? "warn" : "bad";
-        } else if (img) {
-          status = here && job.state === "verifying" ? "Checking…" : "Made";
-          tone = here ? "warn" : "";
-        } else if (here) {
-          status = "Making…";
-          tone = "warn";
-        } else if (job.state === "awaiting_review" || job.state === "done" || job.state === "publishing") {
-          status = "Not made";
-        }
-        return (
-          <figure key={i} className={`slide ${tone}`}>
-            {img ? (
-              <img src={`/api/jobs/${jobId}/draft?slide=${i}&v=${img.attempt}`} alt={`Slide ${i + 1}`} />
-            ) : (
-              <div className="slide-empty">{i + 1}</div>
-            )}
-            <figcaption>
-              <span className="muted">
-                {i + 1}. {ROLE_LABEL[s.role]} · {status}
-              </span>
-              <span>{s.headline || s.imagePrompt.slice(0, 80)}</span>
-            </figcaption>
-          </figure>
-        );
-      })}
+      {pictures.map((p, i) => (
+        <figure key={i} className={`slide ${missing.has(i) ? "" : "ok"}`}>
+          {missing.has(i) ? <div className="slide-empty">{i + 1}</div> : <img src={pictureSrc(job, i)} alt={p.label} />}
+          <figcaption>
+            <span className="muted">{p.label}</span>
+            <span>{p.detail ?? (missing.has(i) ? "Not uploaded" : "Uploaded")}</span>
+          </figcaption>
+        </figure>
+      ))}
     </div>
   );
 }
@@ -190,7 +263,7 @@ export default function JobView({ id }: { id: string }) {
   );
 
   // Auto-run loop: fetch state, run one step if runnable, schedule the next tick.
-  // Pending external work (research polling) waits longer between ticks.
+  // Pending external work (research polling) waits longer between ticks; a job whose start time is later waits longest.
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
@@ -202,10 +275,12 @@ export default function JobView({ id }: { id: string }) {
         const d = await fetchDetail();
         if (stopped) return;
         setError(null);
-        if (auto && RUNNABLE.includes(d.job.state) && !d.job.busy && !waitsForUpload(d.job)) {
+        if (auto && RUNNABLE.includes(d.job.state) && !d.job.busy) {
           const r = await advance(false);
           if (stopped) return;
-          later(r.status === "pending" ? 4000 : r.status === "busy" ? 2000 : r.status === "failed" ? 3000 : 300);
+          later(
+            r.status === "pending" ? 4000 : r.status === "busy" ? 2000 : r.status === "failed" ? 3000 : r.status === "scheduled" ? 15000 : 300,
+          );
           return;
         }
         later(4000);
@@ -268,9 +343,12 @@ export default function JobView({ id }: { id: string }) {
 
   const { job: j, logs } = detail;
   const isCarousel = j.data.format === "carousel";
-  const slideTotal = j.data.carousel?.slides.length ?? j.data.slideCount ?? 0;
-  const current = j.state === "failed" ? j.data.failedStep : j.state;
-  const stepIndex = TIMELINE.indexOf(current as State);
+  const pictureCount = picturesOf(j).length;
+  const uploaded = pictureCount - missingPictures(j.data).length;
+  const waiting = j.state === "generating";
+  const current = (j.state === "failed" ? j.data.failedStep : j.state) as State | undefined;
+  const shown = current ? (LEGACY_STEP[current] ?? current) : undefined;
+  const stepIndex = shown ? TIMELINE.indexOf(shown) : -1;
   const stepClass = (s: State) => {
     const i = TIMELINE.indexOf(s);
     if (j.state === "done") return "done";
@@ -279,13 +357,19 @@ export default function JobView({ id }: { id: string }) {
   };
   // Overall progress: the job's place on the timeline. A finished job is full, a failed one stops where it failed.
   const pct = j.state === "done" ? 100 : stepIndex < 0 ? 0 : Math.round((stepIndex / (TIMELINE.length - 1)) * 100);
-  const canRun = RUNNABLE.includes(j.state) && !j.busy && !working && !waitsForUpload(j);
+  const canRun = RUNNABLE.includes(j.state) && !j.busy && !working;
   const switchedOff = WORKFLOW_KEYS.filter((k) => j.data.workflow?.[k]);
   const skippedStates = new Set<State>(
     switchedOff.map((k) => SKIP_STEP[k]).filter((s): s is State => s !== undefined),
   );
   // A switched-off step is marked on the timeline, except the step the job is on now.
   const isSkipped = (s: State) => skippedStates.has(s) && TIMELINE.indexOf(s) !== stepIndex;
+  const startsLater = new Date(j.scheduled_at) > new Date();
+  const timing = startsLater
+    ? j.state === "captioning" || j.state === "publishing"
+      ? `posts at ${new Date(j.scheduled_at).toLocaleString()}`
+      : `starts ${new Date(j.scheduled_at).toLocaleString()}`
+    : null;
 
   return (
     <>
@@ -295,11 +379,11 @@ export default function JobView({ id }: { id: string }) {
             <h2 className="title" style={{ marginBottom: 4 }}>{j.topic}</h2>
             <span className="muted">
               Job {j.id.slice(0, 8)} · created {new Date(j.created_at).toLocaleString()}
-              {new Date(j.scheduled_at) > new Date() && <> · starts {new Date(j.scheduled_at).toLocaleString()}</>}
+              {timing && <> · {timing}</>}
             </span>
           </div>
           <div className="row">
-            {isCarousel && <span className="badge">Carousel · {slideTotal} slides</span>}
+            {isCarousel && <span className="badge">Carousel · {pictureCount} slides</span>}
             <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
           </div>
         </div>
@@ -319,7 +403,7 @@ export default function JobView({ id }: { id: string }) {
           <ol className="timeline">
             {TIMELINE.map((s) => {
               const skipped = isSkipped(s);
-              const running = s === current && j.busy;
+              const running = s === shown && j.busy;
               return (
                 <li
                   key={s}
@@ -335,9 +419,11 @@ export default function JobView({ id }: { id: string }) {
           </ol>
           <div className="stack">
             <p className="muted">
-              {isCarousel
-                ? `Slide ${Math.min((j.data.slideIndex ?? 0) + 1, slideTotal || 1)} of ${slideTotal || "?"} · pictures made ${(j.data.slideImages ?? []).length}`
-                : `Generation ${j.attempts} of ${MAX_GENERATIONS}`}
+              {pictureCount > 0 && (waiting || j.state === "captioning" || j.state === "publishing" || j.state === "done")
+                ? `Pictures uploaded: ${uploaded} of ${pictureCount}`
+                : pictureCount > 0
+                  ? `Pictures: ${pictureCount} to make`
+                  : null}
               {j.busy ? " · a step is running…" : ""}
             </p>
             {switchedOff.length > 0 && (
@@ -358,11 +444,7 @@ export default function JobView({ id }: { id: string }) {
               Also run steps from this page
             </label>
             <div className="row">
-              <button
-                className="primary"
-                disabled={!canRun}
-                onClick={() => run(() => advance(true))}
-              >
+              <button className="primary" disabled={!canRun} onClick={() => run(() => advance(true))}>
                 Run next step
               </button>
               {j.state === "failed" && (
@@ -378,7 +460,7 @@ export default function JobView({ id }: { id: string }) {
         {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
       </section>
 
-      {waitsForUpload(j) && <ImageUpload jobId={id} onDone={() => fetchDetail().catch(() => {})} />}
+      {waiting && <PicturesPanel job={j} onChanged={() => fetchDetail().catch(() => {})} />}
 
       {j.data.reportPath && (
         <section className="card row" style={{ justifyContent: "space-between" }}>
@@ -387,81 +469,69 @@ export default function JobView({ id }: { id: string }) {
         </section>
       )}
 
-      {(j.data.draftPath || isCarousel) && (
-        <section className="card grid2">
-          {isCarousel ? (
-            <div className="stack">
-              <h2>Slides</h2>
-              <SlideStrip jobId={id} job={j} />
-            </div>
-          ) : (
-            <div className="stack">
-              <h2>Latest image</h2>
-              <img className="preview" src={`/api/jobs/${id}/draft?v=${j.attempts}`} alt="Generated draft" />
-              {j.data.lastPrompt && <p className="muted">Prompt: {j.data.lastPrompt}</p>}
-            </div>
+      {!waiting && pictureCount > 0 && (
+        <section className="card stack">
+          <h2>{isCarousel ? "Slides" : "Picture"}</h2>
+          <PictureGallery job={j} />
+          {!isCarousel && j.data.imagePrompt && (
+            <details>
+              <summary className="muted">Prompt used</summary>
+              <pre className="block">{j.data.imagePrompt}</pre>
+            </details>
           )}
-          <div className="stack">
-            <h2>Verification</h2>
-            {j.data.verdict?.skipped ? (
-              <span className="badge" style={{ justifySelf: "start" }}>Skipped (switched off)</span>
-            ) : j.data.verdict ? (
-              j.data.verdict.pass ? (
-                <span className="badge ok" style={{ justifySelf: "start" }}>Passed</span>
-              ) : (
-                <span className="badge bad" style={{ justifySelf: "start" }}>Failed</span>
-              )
-            ) : (
-              <span className="muted">Not checked yet</span>
-            )}
-            {j.data.verdict && j.data.verdict.issues.length > 0 && (
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {j.data.verdict.issues.map((issue, i) => (
-                  <li key={i}>{issue}</li>
-                ))}
-              </ul>
-            )}
+        </section>
+      )}
 
-            {j.state === "awaiting_review" && (
-              <>
-                <p className="banner">
-                  {j.data.verdict?.skipped
-                    ? "The image check is switched off. Approve to post."
-                    : j.data.verdict && !j.data.verdict.pass
-                      ? isCarousel
-                        ? "Some slides failed the check twice. Look at the slides, then post the set or make all of them again."
-                        : "Verification failed twice. Decide whether to post this image or regenerate it."
-                      : "Verification passed. Approve to post."}
-                </p>
-                <div className="row">
-                  <button
-                    className="primary"
-                    disabled={working}
-                    onClick={() => run(() => api("POST", `/api/jobs/${id}/review`, { action: "approve" }))}
-                  >
-                    Approve &amp; post
-                  </button>
-                </div>
-                <textarea
-                  placeholder={isCarousel ? "Optional: what should change? This is added to every slide." : "Optional: what should change? This is added to the image prompt."}
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                />
-                <div className="row">
-                  <button
-                    disabled={working}
-                    onClick={() =>
-                      run(async () => {
-                        await api("POST", `/api/jobs/${id}/review`, { action: "reject", feedback });
-                        setFeedback("");
-                      })
-                    }
-                  >
-                    {isCarousel ? "Reject & make all slides again" : "Reject & regenerate"}
-                  </button>
-                </div>
-              </>
-            )}
+      {j.data.verdict && (
+        <section className="card stack">
+          <h2>Picture check (older job)</h2>
+          {j.data.verdict.skipped ? (
+            <span className="badge" style={{ justifySelf: "start" }}>Skipped</span>
+          ) : j.data.verdict.pass ? (
+            <span className="badge ok" style={{ justifySelf: "start" }}>Passed</span>
+          ) : (
+            <span className="badge bad" style={{ justifySelf: "start" }}>Failed</span>
+          )}
+          {j.data.verdict.issues.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {j.data.verdict.issues.map((issue, i) => (
+                <li key={i}>{issue}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {j.state === "awaiting_review" && (
+        <section className="card stack">
+          <h2>Your approval (older job)</h2>
+          <p className="banner">Approve to post, or reject to upload the pictures again.</p>
+          <div className="row">
+            <button
+              className="primary"
+              disabled={working}
+              onClick={() => run(() => api("POST", `/api/jobs/${id}/review`, { action: "approve" }))}
+            >
+              Approve &amp; post
+            </button>
+          </div>
+          <textarea
+            placeholder="Optional: what should change?"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+          />
+          <div className="row">
+            <button
+              disabled={working}
+              onClick={() =>
+                run(async () => {
+                  await api("POST", `/api/jobs/${id}/review`, { action: "reject", feedback });
+                  setFeedback("");
+                })
+              }
+            >
+              {isCarousel ? "Reject and upload the slides again" : "Reject and upload a new picture"}
+            </button>
           </div>
         </section>
       )}

@@ -4,7 +4,7 @@
 // (JSON, operation -> tool name) overrides it when it picks the wrong tool.
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
-import { IMAGE_PROMPT_LIMIT, parseCarouselPlan } from "@/lib/jobs/carousel";
+import { parseCarouselPlan } from "@/lib/jobs/carousel";
 import { imageRules } from "@/lib/jobs/design";
 import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
@@ -299,6 +299,8 @@ async function extractImage(result: McpCallResult): Promise<{ bytes: Buffer; mim
 
 /** Image pictures can take longer than a text answer. The step has 300 seconds, so this leaves room for the rest. */
 const IMAGE_TIMEOUT_MS = 240_000;
+/** The image tool refuses a longer prompt. Only the image tool calls below use it; the workflow no longer makes pictures. */
+const IMAGE_TOOL_PROMPT_LIMIT = 1000;
 
 export function createGemini(opts: McpOptions): Providers["gemini"] {
   const r = makeRunner("gemini", opts);
@@ -421,7 +423,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
     generateImage: (prompt, model) =>
       r.run("generateImage", async (client, route, cookie) => {
         // The image tool refuses longer prompts, so a long one is shortened here rather than failing the job.
-        const safe = prompt.length > IMAGE_PROMPT_LIMIT ? prompt.slice(0, IMAGE_PROMPT_LIMIT) : prompt;
+        const safe = prompt.length > IMAGE_TOOL_PROMPT_LIMIT ? prompt.slice(0, IMAGE_TOOL_PROMPT_LIMIT) : prompt;
         const res = await r.call(client, route, { prompt: safe, model, timeoutMs: IMAGE_TIMEOUT_MS }, cookie);
         return extractImage(res);
       }),

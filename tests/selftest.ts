@@ -379,7 +379,12 @@ async function main() {
   // The SQL in tickOnce lists the states it skips. They must be exactly the non-runnable ones.
   const notRunnable = STATES.filter((s) => !RUNNABLE.includes(s)).sort();
   assert.deepEqual([...NOT_TICKED].sort(), notRunnable);
-  ok("cron tick: skips exactly the states the runner will not run (awaiting_review, done, failed)");
+  // The tick's query repeats the same list as text. A job left out of it would be picked on every tick and block the others.
+  const tickSource = (await import("node:fs")).readFileSync("lib/jobs/tick.ts", "utf8");
+  const sqlSkips = [...tickSource.matchAll(/state not in \(([^)]*)\)/g)][0]?.[1] ?? "";
+  assert.deepEqual(sqlSkips.split(",").map((s) => s.trim().replace(/'/g, "")).sort(), notRunnable, "the tick query skips the same states");
+  assert.ok(notRunnable.includes("generating"), "a job waiting for its pictures is never picked by the tick");
+  ok("cron tick: skips exactly the states the runner will not run, including a job waiting for its pictures");
 
   // ---------- job start times ----------
   const { parseStart } = await import("@/lib/jobs/schedule");
@@ -517,8 +522,13 @@ async function main() {
   const { normalizeWorkflow, normalizeManual, missingManual, defaultWorkflow } = await import("@/lib/jobs/workflow");
   const { runStep } = await import("@/lib/jobs/steps");
   assert.deepEqual(normalizeWorkflow(undefined), defaultWorkflow(), "no switches means every step runs");
-  assert.equal(normalizeWorkflow({ skipVerify: true, nonsense: 1 }).skipVerify, true, "unknown keys are ignored");
-  assert.throws(() => normalizeWorkflow({ skipVerify: "yes" }), /must be true or false/, "a non-boolean switch is refused");
+  assert.equal(normalizeWorkflow({ skipCaption: true, nonsense: 1 }).skipCaption, true, "unknown keys are ignored");
+  assert.throws(() => normalizeWorkflow({ skipCaption: "yes" }), /must be true or false/, "a non-boolean switch is refused");
+  assert.deepEqual(
+    normalizeWorkflow({ skipImage: true, skipVerify: true, skipApproval: true }),
+    defaultWorkflow(),
+    "the switches for Gemini pictures and the picture check are gone: old saved values are ignored",
+  );
   assert.deepEqual(normalizeManual({ report: "  hello  ", caption: "   " }), { report: "hello" });
   assert.throws(() => normalizeManual({ caption: "x".repeat(2201) }), /longer than/);
   assert.match(missingManual({ ...defaultWorkflow(), skipResearch: true }, {}) ?? "", /Paste the research report/);
@@ -539,10 +549,10 @@ async function main() {
       updated_at: new Date(),
     }) as any;
 
-  const noVerify = await runStep(jobWith("verifying", { workflow: { ...defaultWorkflow(), skipVerify: true }, draftPath: "drafts/none/1" }));
-  assert.equal(noVerify.state, "captioning");
-  assert.equal((noVerify.data?.verdict as any).skipped, true);
-  ok("skip image check: goes straight to the caption, marked as skipped");
+  const legacyCheck = await runStep(jobWith("verifying", { workflow: defaultWorkflow(), draftPath: "drafts/none/1" }));
+  assert.equal(legacyCheck.state, "captioning", "a job still in the old picture check goes on to the caption");
+  assert.equal((legacyCheck.data?.verdict as any).skipped, true);
+  ok("older jobs in the Gemini picture check: the check is no longer run, and the job goes on to the caption");
 
   const noAnalysis = await runStep(
     jobWith("analyzing", { workflow: { ...defaultWorkflow(), skipAnalysis: true }, report: "# Report body", manual: { imagePrompt: "a cup", analysis: "the angle" } }),
@@ -552,44 +562,40 @@ async function main() {
   assert.equal(noAnalysis.data?.analysis, "the angle");
   ok("skip analysis: your image prompt and analysis text are used, with no Gemini chat");
 
-  const waiting = await runStep(jobWith("generating", { workflow: { ...defaultWorkflow(), skipImage: true }, imagePrompt: "a cup" }));
-  assert.equal(waiting.state, "generating");
+  const waiting = await runStep(jobWith("generating", { imagePrompt: "a cup" }));
+  assert.equal(waiting.state, "generating", "a job waiting for its pictures stays where it is");
   assert.equal(waiting.pending, true);
-  assert.equal(waiting.quiet, true, "waiting for an upload is not logged on every poll");
-  const uploaded = await runStep(
-    jobWith("generating", { workflow: { ...defaultWorkflow(), skipImage: true }, uploadedDraftPath: "drafts/x/2", imagePrompt: "a cup" }, 1),
+  assert.equal(waiting.quiet, true, "waiting for pictures is not logged on every poll");
+  const noPicture = await runStep(
+    jobWith("captioning", { workflow: { ...defaultWorkflow(), skipCaption: true }, imagePrompt: "a cup", manual: { caption: "Hook", commentBody: "Body" }, manualContinue: true }),
   );
-  assert.equal(uploaded.state, "verifying");
-  assert.equal(uploaded.attempts, 2);
-  assert.equal(uploaded.data?.draftPath, "drafts/x/2");
-  ok("skip image: waits quietly for an upload, then goes on to the check with that picture");
+  assert.equal(noPicture.state, "generating", "with no picture the job waits for one, and never captions or posts without it");
+  assert.match(noPicture.note ?? "", /Waiting for your pictures: 1/);
+  ok("your pictures: the job waits quietly for them, and does not caption or post without them");
 
-  const bothSkips = { ...defaultWorkflow(), skipCaption: true, skipApproval: true };
+  const skipCaption = { ...defaultWorkflow(), skipCaption: true };
   const posted = await runStep(
     jobWith("captioning", {
-      workflow: bothSkips,
+      workflow: skipCaption,
       imagePrompt: "a cup",
-      verdict: { pass: true, issues: [], skipped: true },
+      draftPath: "drafts/x/1",
+      manualContinue: true,
       manual: { caption: "Hook text #coffee", commentBody: "Full details here" },
     }),
   );
-  assert.equal(posted.state, "publishing");
+  assert.equal(posted.state, "publishing", "Continue posts at once, with your caption");
   assert.ok((posted.data?.plan as any).caption.startsWith("Hook text #coffee"));
   assert.equal((posted.data?.plan as any).commentBody, "Full details here");
-  const held = await runStep(
+  const notContinued = await runStep(
     jobWith("captioning", {
-      workflow: { ...defaultWorkflow(), skipCaption: true },
+      workflow: skipCaption,
       imagePrompt: "a cup",
+      draftPath: "drafts/x/1",
       manual: { caption: "Hook", commentBody: "Body" },
-      verdict: { pass: true, issues: [] },
     }),
   );
-  assert.equal(held.state, "awaiting_review", "without Skip approval the job waits for you");
-  const failedCheck = await runStep(
-    jobWith("captioning", { workflow: bothSkips, imagePrompt: "a cup", manual: { caption: "Hook", commentBody: "Body" }, verdict: { pass: false, issues: ["x"] } }),
-  );
-  assert.equal(failedCheck.state, "awaiting_review", "a failed check still stops for you, even with Skip approval");
-  ok("skip caption and skip approval: your caption posts at once; a failed check still stops for you");
+  assert.equal(notContinued.state, "awaiting_review", "a job that was not continued (older jobs) still waits for your approval");
+  ok("Continue posts the job at once with the caption; an older job without Continue waits for your approval");
 
   // ---------- carousel: slide count, plan, slide prompts, check ----------
   const carousel = await import("@/lib/jobs/carousel");
@@ -636,33 +642,9 @@ async function main() {
   assert.throws(() => carousel.slidesFromLines("a\nb\nc", 2), /3 image prompts, but this carousel has 2 slides/);
   ok("hand-written slides: one prompt per line, first line is the hook, blank lines ignored, too many refused");
 
-  const hook = { role: "hook" as const, figure: "3x", headline: "Why coffee helps", body: "Three facts", imagePrompt: "a cup on a desk" };
-  const hookPrompt = carousel.slidePrompt("Flat illustration.", hook, { index: 0, total: 8 });
-  assert.ok(hookPrompt.includes("NO TEXT"), "every picture is asked for without text: the app draws the words");
-  assert.ok(!hookPrompt.includes("Why coffee helps") && !hookPrompt.includes("Three facts"), "the slide's words stay out of the picture request");
-  assert.ok(hookPrompt.includes("Slide 1 of 8") && hookPrompt.includes("Flat illustration."), "the position and the shared style are given");
-  assert.ok(hookPrompt.includes("first slide"), "the hook is asked to be striking");
-  const point = carousel.slidePrompt("Flat illustration.", { role: "point", headline: "", body: "", imagePrompt: "steam" }, { index: 3, total: 8 }, ["text garbled."]);
-  assert.ok(!point.includes("first slide"), "only the hook is marked as the first slide");
-  assert.ok(point.includes("Slide 4 of 8") && point.includes("Fix these problems: text garbled."), "a correction is added to the prompt");
-  ok("slide prompts: text stays out of the picture request; the hook is marked; corrections are added");
-
-  const img = (pass: boolean | undefined, issues?: string[]) => ({ attempt: 1, path: "drafts/x/1/1", tries: 1, pass, issues });
-  assert.deepEqual(carousel.carouselVerdict([img(true), img(true)], 2, false), { pass: true, issues: [] });
-  const mixed = carousel.carouselVerdict([img(true), img(false, ["text garbled"]), img(true)], 3, false);
-  assert.equal(mixed.pass, false);
-  assert.deepEqual(mixed.issues, ["Slide 2: text garbled"], "each issue names its slide");
-  const short = carousel.carouselVerdict([img(true)], 3, false);
-  assert.equal(short.pass, false, "a slide that was never made fails the set");
-  assert.deepEqual(short.issues, ["Slide 2: not made yet", "Slide 3: not made yet"]);
-  assert.deepEqual(carousel.carouselVerdict([img(false)], 1, false).issues, ["Slide 1: failed the check"]);
-  assert.deepEqual(carousel.carouselVerdict([], 3, true), { pass: true, issues: [], skipped: true });
-  ok("carousel check: passes only when every slide passes; each issue names its slide; a missing slide fails");
-
-  assert.match(carousel.carouselProblem("carousel", { ...defaultWorkflow(), skipImage: true }) ?? "", /cannot be skipped/);
-  assert.equal(carousel.carouselProblem("carousel", defaultWorkflow()), null);
-  assert.equal(carousel.carouselProblem("post", { ...defaultWorkflow(), skipImage: true }), null, "a single post can still take an uploaded picture");
-  ok("carousel: skipping image generation is refused; a single post may still skip it");
+  assert.equal(carousel.cut("Why coffee helps you focus every morning", 20), "Why coffee helps…", "long text is cut at a word, with an ellipsis");
+  assert.equal(carousel.cleanSlideText("Coffee helps [cite: 2] , mostly [1][2]."), "Coffee helps, mostly.");
+  ok("carousel text: long text is cut at a word; citation markers are removed");
 
   // Gemini: the plan request carries the chosen count and the report file; the reply is cut to that count.
   const planReply = JSON.stringify({
@@ -784,26 +766,8 @@ async function main() {
   assert.match(missingManual({ ...defaultWorkflow(), skipAnalysis: true }, {}) ?? "", /Write the image prompt/);
   ok("hand-written carousel: its slides are asked for, not a single image prompt");
 
-  const { afterCheck } = await import("@/lib/jobs/carousel-steps");
   const pic = (tries: number, pass?: boolean, issues: string[] = []) => ({ attempt: 1, path: "p", tries, pass, issues });
   const wfAll = defaultWorkflow();
-  const failing = { pass: false, issues: ["text garbled"], revisedPrompt: "a clean cup" };
-  const retry = afterCheck(1, 3, pic(1, false, ["text garbled"]), failing, [pic(1, true), pic(1, false, ["text garbled"])], wfAll);
-  assert.equal(retry.state, "generating", "a first failure makes the same slide again");
-  assert.equal(retry.data?.slideIndex, 1);
-  assert.deepEqual(retry.data?.slideFix, { index: 1, notes: ["text garbled"], imagePrompt: "a clean cup" });
-  const moved = afterCheck(1, 3, pic(2, false, ["text garbled"]), failing, [pic(1, true), pic(2, false, ["text garbled"])], wfAll);
-  assert.equal(moved.state, "generating");
-  assert.equal(moved.data?.slideIndex, 2, "after a second failure the job moves on to the next slide");
-  assert.equal(moved.data?.slideFix, null);
-  const lastFail = afterCheck(2, 3, pic(2, false, ["text garbled"]), failing, [pic(1, true), pic(1, true), pic(2, false, ["text garbled"])], wfAll);
-  assert.equal(lastFail.state, "captioning", "after the last slide the caption comes next, even when a slide failed");
-  assert.equal((lastFail.data?.verdict as any).pass, false);
-  assert.deepEqual((lastFail.data?.verdict as any).issues, ["Slide 3: text garbled"]);
-  const lastPass = afterCheck(2, 3, pic(1), { pass: true, issues: [] }, [pic(1, true), pic(1, true), pic(1, true)], wfAll);
-  assert.equal(lastPass.state, "captioning");
-  assert.equal((lastPass.data?.verdict as any).pass, true);
-  ok("carousel check decisions: one correction per slide, then on; the set's verdict names the failed slide");
 
   // The carousel steps that need no picture storage run here. Picture generation and reading back the
   // drafts need Vercel Blob, so they are checked on the live app.
@@ -819,8 +783,7 @@ async function main() {
   assert.equal(planned.state, "generating");
   assert.equal((planned.data?.carousel as any).slides.length, 3);
   assert.equal((planned.data?.carousel as any).slides[0].role, "hook");
-  assert.deepEqual(planned.data?.slideImages, []);
-  assert.equal(planned.data?.slideIndex, 0);
+  assert.deepEqual(planned.data?.slideImages, [null, null, null], "every slide waits for its picture");
   assert.deepEqual(planned.data?.design, { shape: "portrait", handle: "rvcj.ai", footer: "Follow for more" }, "the look is kept with the job");
   await assert.rejects(
     () => runStep(jobWith("analyzing", { format: "carousel", slideCount: 3, workflow: handWritten, report: "# r", manual: { slides: "one" }, design: { shape: "square", handle: "", footer: "" } })),
@@ -828,19 +791,28 @@ async function main() {
   );
   ok("carousel analysis, skipped: your prompts become the slides, the first is the hook");
 
-  const skipChecks = { ...defaultWorkflow(), skipVerify: true };
-  const firstSlide = await runStep(
-    jobWith("verifying", { format: "carousel", workflow: skipChecks, carousel: cPlanOf(2), slideIndex: 0, slideImages: [pic(1)] }),
-  );
-  assert.equal(firstSlide.state, "generating");
-  assert.equal(firstSlide.data?.slideIndex, 1);
-  assert.equal((firstSlide.data?.slideImages as any[])[0].pass, true);
-  const lastSlide = await runStep(
-    jobWith("verifying", { format: "carousel", workflow: skipChecks, carousel: cPlanOf(2), slideIndex: 1, slideImages: [pic(1, true), pic(1)] }),
-  );
-  assert.equal(lastSlide.state, "captioning");
-  assert.equal((lastSlide.data?.verdict as any).skipped, true);
-  ok("carousel check, skipped: each slide moves on, and the last one goes to the caption");
+  const { missingPictures, checkContinue } = await import("@/lib/jobs/pictures");
+  const threeSlides = { format: "carousel" as const, carousel: cPlanOf(3) };
+  assert.deepEqual(missingPictures({ ...threeSlides, slideImages: [null, null, null] }), [0, 1, 2], "every slide waits for its picture at first");
+  assert.deepEqual(missingPictures({ ...threeSlides, slideImages: [pic(1), null, pic(1)] }), [1]);
+  assert.deepEqual(missingPictures({ ...threeSlides, slideImages: [pic(1), pic(1), pic(1)] }), []);
+  assert.deepEqual(missingPictures({ ...threeSlides, slideImages: [pic(1)] }), [1, 2], "slides with no entry at all are missing too");
+  assert.deepEqual(missingPictures({ format: "post" }), [0], "a single post has one picture to make");
+  assert.deepEqual(missingPictures({ format: "post", draftPath: "drafts/x/0" }), []);
+  ok("pictures: each slide, or the single post, has its own place; a place with no picture is missing");
+
+  const soon = new Date("2026-10-18T00:00:00Z");
+  const twoSlides = { format: "carousel" as const, carousel: cPlanOf(2), slideImages: [pic(1), pic(1)] };
+  assert.deepEqual(checkContinue(twoSlides, undefined, soon), { ok: true, at: null }, "Continue with every picture posts now");
+  const oneMissing = checkContinue({ ...twoSlides, slideImages: [pic(1), null] }, undefined, soon);
+  assert.equal(oneMissing.ok, false, "Continue is refused while a picture is missing");
+  assert.match((oneMissing as any).error, /Still missing: 2/);
+  const chosen = checkContinue(twoSlides, "2026-10-18T06:30:00Z", soon);
+  assert.ok(chosen.ok && chosen.at?.toISOString() === "2026-10-18T06:30:00.000Z", "a scheduled post keeps its time");
+  assert.equal(checkContinue(twoSlides, "2026-10-17T23:00:00Z", soon).ok, false, "a time in the past is refused");
+  assert.equal(checkContinue(twoSlides, "2026-10-18T00:00:30Z", soon).ok, false, "a time less than a minute ahead is refused");
+  assert.equal(checkContinue(twoSlides, "not a time", soon).ok, false, "a time that is not a time is refused");
+  ok("Continue: every picture must be uploaded; a scheduled time must be at least a minute ahead");
 
   const albumPlan = { plan: { caption: "c", commentBody: "b", imagePrompt: "i" } };
   const album = await runStep(
@@ -857,7 +829,7 @@ async function main() {
   assert.match(album.note ?? "", /one album of 2 pictures/);
   await assert.rejects(
     () => runStep(jobWith("publishing", { format: "carousel", workflow: wfAll, ...albumPlan, carousel: cPlanOf(2), slideImages: [pic(1, true)] })),
-    /has 1 of 2 pictures/,
+    /No picture stored for slide 2/,
   );
   ok("carousel publishing: all pictures go out as one album; a missing picture stops it with a clear message");
 
@@ -999,7 +971,7 @@ async function main() {
     quickJob("captioning", {
       analysis: "Mock analysis",
       imagePrompt: "a cup",
-      verdict: { pass: true, issues: [] },
+      draftPath: "drafts/x/0",
       quick: { cited: [{ url: "https://example.com/mock-1", title: "Mock source 1" }] },
     }),
   );
@@ -1012,33 +984,6 @@ async function main() {
   const carouselMod = await import("@/lib/jobs/carousel");
   const imagesMod = await import("@/lib/images");
   const sharpLib = (await import("sharp")).default;
-  const oneSlide = { role: "point" as const, headline: "Sleep", body: "", imagePrompt: "a cup of tea" };
-  for (const text of [
-    carouselMod.slidePrompt("Flat style", oneSlide, { index: 1, total: 3 }),
-    carouselMod.slidePrompt("Flat style", oneSlide, { index: 1, total: 3 }, ["the picture is landscape"]),
-  ]) {
-    assert.match(text, /exactly 1:1/, "every request states the square format");
-    assert.match(text, /NO TEXT/, "every request forbids text: the app draws it");
-    assert.match(text, /Never landscape or portrait/);
-    assert.doesNotMatch(text, /Sleep/, "the slide's words stay out of the picture");
-  }
-  ok("every slide request carries the square format and the no-text rule, including fixes");
-
-  const huge = carouselMod.slidePrompt(
-    "Style words ".repeat(200),
-    { role: "hook", headline: "H".repeat(400), body: "B".repeat(400), imagePrompt: "scene ".repeat(800) },
-    { index: 0, total: 8 },
-    ["fix ".repeat(300)],
-  );
-  assert.ok(huge.length <= carouselMod.IMAGE_PROMPT_LIMIT, `the prompt is ${huge.length} characters, over the limit`);
-  assert.match(huge, /exactly 1:1/, "the rules survive a long prompt");
-  assert.match(huge, /NO TEXT/);
-  assert.match(huge, /first slide/, "the hook's note survives a long prompt");
-  const hugePortrait = carouselMod.slidePrompt("Style words ".repeat(200), { role: "hook", headline: "H", body: "B", imagePrompt: "scene ".repeat(800) }, { index: 0, total: 8 }, ["fix ".repeat(300)], "portrait");
-  assert.ok(hugePortrait.length <= carouselMod.IMAGE_PROMPT_LIMIT && /exactly 4:5/.test(hugePortrait), "a portrait prompt stays within the limit and asks for 4:5");
-  const shortOne = carouselMod.slidePrompt("", oneSlide, { index: 1, total: 3 });
-  assert.ok(shortOne.length < carouselMod.IMAGE_PROMPT_LIMIT);
-  ok(`a slide prompt stays within ${carouselMod.IMAGE_PROMPT_LIMIT} characters even with long text; the rules and the hook's note are kept`);
 
   const wide = await sharpLib({ create: { width: 1600, height: 900, channels: 3, background: { r: 200, g: 120, b: 60 } } }).png().toBuffer();
   const tall = await sharpLib({ create: { width: 900, height: 1600, channels: 3, background: { r: 60, g: 120, b: 200 } } }).png().toBuffer();
@@ -1090,10 +1035,8 @@ async function main() {
   );
   assert.equal(citedPlan.slides[0].body, "Retrieval helps.");
   assert.equal(citedPlan.slides[0].imagePrompt, "a brain.");
-  const citedPrompt = carouselMod.slidePrompt("", citedPlan.slides[0], { index: 0, total: 2 });
-  assert.ok(!citedPrompt.includes("[cite") && !citedPrompt.includes("[1]"), "citation markers never reach the picture");
-  assert.ok(!/Swipe|Retrieval helps/.test(citedPrompt), "the app draws the swipe line and the words, not the picture");
-  ok("slide text: citation markers are removed; the picture request carries none of the words");
+  assert.ok(!JSON.stringify(citedPlan).includes("[cite") && !citedPlan.slides[0].imagePrompt.includes("[1]"), "citation markers never reach the picture");
+  ok("slide text: citation markers are removed from the slide text and the picture prompt");
 
   const blankFake = await startFakeMcp({
     tools: [

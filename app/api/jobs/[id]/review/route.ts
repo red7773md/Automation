@@ -34,7 +34,7 @@ export const POST = adminRoute<P>(async (req, { params }) => {
     // A carousel is made again from its first slide: every picture is made anew, with the reviewer's notes.
     const [ok] = await sql`
       update jobs set state = 'generating', error = null, updated_at = now(),
-        data = data || ${JSON.stringify({ reviewFeedback: feedback, slideImages: [], slideIndex: 0, slideFix: null, verdict: null, nextPrompt: null })}::jsonb
+        data = data || ${JSON.stringify({ reviewFeedback: feedback, slideImages: [], verdict: null, nextPrompt: null })}::jsonb
       where id = ${id}::uuid and state = 'awaiting_review'
       returning id`;
     if (!ok) return json({ error: "The job changed. Reload the page." }, 409);
