@@ -48,11 +48,18 @@ export async function advanceJob(id: string, opts: { force?: boolean } = {}): Pr
     const res = await runStep(job, await loadModels());
     const attempts = res.attempts ?? job.attempts;
     // A step that worked clears the count of temporary problems and any wait.
-    await sql`
+    // A job cancelled while this step ran keeps its cancellation: the step's result is dropped.
+    const saved = await sql`
       update jobs set state = ${res.state}, attempts = ${attempts},
         data = data || ${JSON.stringify({ ...(res.data ?? {}), transientTries: 0, retryAt: null })}::jsonb,
         error = null, updated_at = now()
-      where id = ${id}::uuid`;
+      where id = ${id}::uuid
+        and coalesce((data->>'cancelled')::boolean, false) = false
+      returning id`;
+    if (saved.length === 0) {
+      await logEvent(id, job.state, "Cancelled while this step was running. Its result was dropped.", { level: "warn" });
+      return { status: "idle", state: "failed" };
+    }
     if (!res.quiet) {
       await logEvent(id, job.state, res.note ?? `${job.state} → ${res.state}`, {
         durationMs: Date.now() - started,
@@ -81,11 +88,17 @@ export async function advanceJob(id: string, opts: { force?: boolean } = {}): Pr
       });
       return { status: "pending", state: job.state, note: message, error: message };
     }
-    await sql`
+    const failed = await sql`
       update jobs set state = 'failed', error = ${message},
         data = data || ${JSON.stringify({ failedStep: job.state })}::jsonb,
         updated_at = now()
-      where id = ${id}::uuid`;
+      where id = ${id}::uuid
+        and coalesce((data->>'cancelled')::boolean, false) = false
+      returning id`;
+    if (failed.length === 0) {
+      await logEvent(id, job.state, `Cancelled while this step was running. Its error was dropped: ${message}`, { level: "warn" });
+      return { status: "idle", state: "failed" };
+    }
     await logEvent(id, job.state, `Step failed: ${message}`, {
       level: "error",
       detail: stack,

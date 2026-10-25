@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client";
 import type { PictureParts } from "@/lib/adapters/types";
-import { RUNNABLE, STATE_LABEL, TIMELINE, type JobRow, type State } from "@/lib/jobs/states";
+import { CANCELLABLE, RUNNABLE, STATE_LABEL, TIMELINE, type JobRow, type State } from "@/lib/jobs/states";
 import { missingPictures } from "@/lib/jobs/pictures";
 import { WORKFLOW_KEYS, WORKFLOW_LABEL, type WorkflowKey } from "@/lib/jobs/workflow";
 
@@ -318,6 +318,11 @@ export default function JobView({ id }: { id: string }) {
     }
   }
 
+  function cancelJob() {
+    if (!window.confirm("Cancel this job? Nothing will be posted. Retry resumes it from the same step.")) return;
+    run(() => api("POST", `/api/jobs/${id}/cancel`));
+  }
+
   async function copyReport() {
     if (!detail) return;
     const j = detail.job;
@@ -354,13 +359,14 @@ export default function JobView({ id }: { id: string }) {
   const pictureCount = picturesOf(j).length;
   const uploaded = pictureCount - missingPictures(j.data).length;
   const waiting = j.state === "generating";
+  const cancelled = j.state === "failed" && j.data.cancelled === true;
   const current = (j.state === "failed" ? j.data.failedStep : j.state) as State | undefined;
   const shown = current ? (LEGACY_STEP[current] ?? current) : undefined;
   const stepIndex = shown ? TIMELINE.indexOf(shown) : -1;
   const stepClass = (s: State) => {
     const i = TIMELINE.indexOf(s);
     if (j.state === "done") return "done";
-    if (j.state === "failed") return i === stepIndex ? "failed" : i < stepIndex ? "done" : "";
+    if (j.state === "failed") return i === stepIndex && !cancelled ? "failed" : i < stepIndex ? "done" : "";
     return i < stepIndex ? "done" : i === stepIndex ? "current" : "";
   };
   // Overall progress: the job's place on the timeline. A finished job is full, a failed one stops where it failed.
@@ -392,12 +398,12 @@ export default function JobView({ id }: { id: string }) {
           </div>
           <div className="row">
             {isCarousel && <span className="badge">Carousel · {pictureCount} slides</span>}
-            <span className={`badge ${TONE[j.state] ?? ""}`}>{STATE_LABEL[j.state]}</span>
+            <span className={`badge ${cancelled ? "" : (TONE[j.state] ?? "")}`}>{cancelled ? "Cancelled" : STATE_LABEL[j.state]}</span>
           </div>
         </div>
 
         <div
-          className={`progress${j.busy ? " live" : ""}${j.state === "failed" ? " bad" : ""}`}
+          className={`progress${j.busy ? " live" : ""}${j.state === "failed" && !cancelled ? " bad" : ""}`}
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
@@ -457,14 +463,23 @@ export default function JobView({ id }: { id: string }) {
               </button>
               {j.state === "failed" && (
                 <button disabled={working} onClick={() => run(() => api("POST", `/api/jobs/${id}/retry`))}>
-                  Retry from “{STATE_LABEL[j.data.failedStep ?? "queued"]}”
+                  {cancelled ? "Resume from" : "Retry from"} “{STATE_LABEL[j.data.failedStep ?? "queued"]}”
+                </button>
+              )}
+              {CANCELLABLE.includes(j.state) && (
+                <button className="danger" disabled={working} onClick={cancelJob}>
+                  Cancel job
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        {j.error && <pre className="block error" style={{ marginTop: 12 }}>{j.error}</pre>}
+        {cancelled ? (
+          <p className="muted" style={{ marginTop: 12 }}>Cancelled. Nothing was posted.</p>
+        ) : (
+          j.error && <pre className="block error" style={{ marginTop: 12 }}>{j.error}</pre>
+        )}
         {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
       </section>
 

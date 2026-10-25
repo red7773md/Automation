@@ -37,6 +37,20 @@ export const STATE_LABEL: Record<State, string> = {
  */
 export const RUNNABLE: readonly State[] = ["queued", "researching", "analyzing", "verifying", "captioning", "publishing"];
 
+/**
+ * A job can be cancelled in any of these states. Not while publishing: the post may already be out.
+ * Done and failed jobs have nothing left to cancel.
+ */
+export const CANCELLABLE: readonly State[] = [
+  "queued",
+  "researching",
+  "analyzing",
+  "generating",
+  "verifying",
+  "captioning",
+  "awaiting_review",
+];
+
 /** Timeline order shown in the UI. */
 export const TIMELINE: readonly State[] = [
   "queued",
@@ -94,6 +108,8 @@ export type JobData = {
   approvedAt?: string;
   manualContinue?: boolean; // Continue was pressed: the caption is written and the post goes out, at the time chosen if any
   continuedAt?: string;
+  cancelled?: boolean; // stopped by you: the job is failed, and Retry resumes it from failedStep
+  cancelledAt?: string;
   failedStep?: State;
   publish?: PublishProgress;
   publishedAt?: string;
