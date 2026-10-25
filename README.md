@@ -70,6 +70,21 @@ Cookies are not environment variables. Save them in the Settings page.
 The advance route asks for `maxDuration = 300` seconds. If your plan rejects that value, lower it
 in `app/api/jobs/[id]/advance/route.ts`.
 
+## Keeping jobs moving
+
+A job advances while its page is open, and whenever something calls the tick. Set up an outside scheduler to call the tick every minute:
+
+1. In Vercel, set `CRON_SECRET` to a random value of at least 16 characters.
+2. In the scheduler (for example cron-job.org), create a job:
+   - URL: `https://<your-app>.vercel.app/api/cron/tick`
+   - Method: POST
+   - Header: `Authorization: Bearer <CRON_SECRET>` (the same value as in Vercel)
+   - Schedule: every minute
+   - Timeout: as long as the service allows, since one step can take a few minutes.
+3. Each call advances one job by one step. A call that arrives while a step is still running picks another job, so no step runs twice.
+
+The GitHub tick in `.github/workflows/tick.yml` stays as a backup. GitHub runs it late, 2 to 6 hours apart in practice.
+
 ## Using it
 
 1. In Settings, optionally save Gemini cookies (only if your Gemini server needs them). Use a
@@ -77,7 +92,7 @@ in `app/api/jobs/[id]/advance/route.ts`.
 2. Keep `PROVIDER_MODE=mock` and run a job. Nothing is posted.
 3. Set `PROVIDER_MODE=live` when the servers are working.
 
-A job runs only while its page is open, except for the scheduled tick. Reopening the page resumes it.
+A job advances while its page is open, and when the outside scheduler calls the tick (see Keeping jobs moving).
 Press Continue only when every picture is one you want published.
 
 ## Optional HTTP bridges
