@@ -11,12 +11,12 @@ Last updated: 17 Oct 2026.
 A private web app for a single admin. The admin enters a topic, and a job turns it into an
 Instagram post:
 
-1. **Research** with Gemini (deep research through an MCP server, started once and polled)
-2. **Plan** with Gemini: a caption (short hook plus hashtags), a detailed comment, and an image prompt
-3. **Image** from Gemini (through the MCP server's image tool)
-4. **Verify** the image with Gemini. If it fails, regenerate once. If it fails again, wait for the admin
-5. **Approve** in the web UI (or reject with notes, which regenerates the image)
-6. **Publish** through the Instagram MCP server: post the photo, post the detailed comment, pin it
+1. **Research** with Gemini (deep research, or a quick search whose facts are checked against their pages)
+2. **Analyse** with Gemini: the angle, and one picture described in parts (subject, scene, composition, lighting,
+   colours, style, mood, avoid) as JSON. The app builds each picture's prompt from the parts and adds the picture rules
+3. **Pictures** are made by hand (for example in ChatGPT) from each prompt, and uploaded on the job page, one per slide
+4. **Continue** in the web UI writes the caption, hashtags and pinned comment, then publishes. Or schedule the post for a time
+5. **Publish** through the Instagram MCP server: post the photo (or the carousel as one album), post the detailed comment, pin it
 
 ## Status (17 Oct 2026)
 
@@ -27,8 +27,8 @@ Instagram post:
 - **Gemini MCP tool names are not verified.** The server is the Vercel project `webapi`. The app
   matches tools automatically. Run `npm run probe:mcp -- gemini` to list the real tools, then check
   the Settings page mapping. Set `GEMINI_TOOL_MAP` if a match is wrong.
-- **ChatGPT is paused.** Images come from Gemini (`IMAGE_PROVIDER=gemini`). The ChatGPT code remains.
-  Set `IMAGE_PROVIDER=chatgpt` to use it. That needs `CHATGPT_MCP_URL` or `CHATGPT_BRIDGE_URL`, plus cookies.
+- **Pictures are made by hand.** No job calls an image tool any more, so `IMAGE_PROVIDER` and the Gemini and ChatGPT
+  image operations are unused. They remain in the adapters in case they are wanted again.
 - **Keys were pasted in chat** (Instagram MCP key, Gemini MCP key). The owner plans to rotate them.
   Whatever key is current must be set only in Vercel env vars.
 
@@ -69,7 +69,9 @@ Job engine (lib/jobs)  ──►  Providers (lib/adapters/index.ts → Providers
 | `app/api/providers/*` | Status (`transports`, `imageProvider`), cookie get/save/delete, connection test |
 | `app/api/login`, `app/api/logout` | Session cookie `ia_session` |
 | `app/api/media/[jobId]/[attempt]` | PUBLIC but signed: the image URL Instagram downloads |
-| `lib/jobs/states.ts` | States, `RUNNABLE`, `TIMELINE`, `MAX_GENERATIONS = 2`, `JobData`/`JobRow` types (safe for the browser) |
+| `lib/jobs/states.ts` | States, `RUNNABLE`, `TIMELINE`, `JobData`/`JobRow` types (safe for the browser) |
+| `lib/jobs/picture-prompt.ts` | Picture parts: read from the reply, joined into a prompt, with the picture rules added last |
+| `lib/jobs/pictures.ts` | Which pictures are missing, and whether Continue may run (pure) |
 | `lib/jobs/steps.ts` | `runStep(job)`: performs ONE step and returns the next state. Plan normalisation (2200-char limit, adds the "see pinned comment" pointer). 45-minute research timeout |
 | `lib/jobs/runner.ts` | `advanceJob(id)`: atomic lock (`busy` flag, stale after 6 min), runs one step, writes logs, stores failures with `failedStep` |
 | `lib/adapters/types.ts` | `Providers` interface: the contract every adapter implements. Also `Plan`, `Verdict`, `ResearchPoll`, `Health` |
@@ -96,16 +98,23 @@ Job engine (lib/jobs)  ──►  Providers (lib/adapters/index.ts → Providers
 
 ## Pipeline (job states)
 
-`queued → researching → planning → generating → verifying → awaiting_review → publishing → done`,
-plus `failed`. A failed job stores `failedStep`, and Retry resumes at that step.
+`queued → researching → analyzing → generating → captioning → publishing → done`, plus `failed`. A failed job
+stores `failedStep`, and Retry resumes at that step. `generating` is where the job waits for uploaded pictures. The
+tick never picks it up, so it cannot hold up other jobs. `verifying` and `awaiting_review` remain only for jobs made
+before the change.
 
 - **researching:** the first call starts research and stores `researchRef` and `researchStartedAt`.
   Later calls poll until done. Over 45 minutes, the job fails.
-- **planning:** Gemini returns JSON with `caption`, `commentBody`, `imagePrompt`. The research report is cleared.
-- **generating:** Gemini generates the image (`IMAGE_PROVIDER`). Saved privately to Blob. `attempts` increases.
-- **verifying:** Gemini checks the image. Pass goes to review. Fail with `attempts < 2` regenerates
-  using `revisedPrompt`. Fail at the limit goes to review, flagged.
-- **awaiting_review:** approve moves to `publishing`. Reject with notes moves back to `generating`.
+- **analyzing:** Gemini returns JSON with `analysis` and `picture` (the picture in parts). The app builds the
+  prompt. The research report is cleared. A carousel returns one picture per slide, and a shared style.
+- **generating:** the job waits. Each picture is uploaded on the job page to its own slot (`POST /api/jobs/[id]/image?slot=N`),
+  saved privately to Blob. A carousel picture is cut to the carousel's shape first. Nothing is generated by a model.
+- **Continue** (`POST /api/jobs/[id]/continue`, optionally `{at}`): refused until every picture is uploaded. It moves the
+  job to `captioning` and sets `manualContinue`. With a time, `scheduled_at` holds the job until then, as for any
+  scheduled job. The scheduler is only as punctual as the tick (see the self-driving note above).
+- **captioning:** a carousel's text is drawn on each uploaded picture (kept apart as the final picture), then the caption.
+  A job with a missing picture goes back to `generating` and waits.
+- **awaiting_review:** only for jobs made before the change. A job with `manualContinue` goes straight to `publishing`.
 - **publishing:** resumable sub-steps saved in `data.publish`: post photo (`mediaId`), then the
   detail comment (`commentId`), then pin. A retry never posts the photo twice.
 - **Mock mode:** nothing external is called and nothing is posted. Steps are marked DRY RUN.
@@ -116,7 +125,7 @@ plus `failed`. A failed job stores `failedStep`, and Retry resumes at that step.
 |---|---|---|---|
 | Instagram | post, comment, pin | MCP | `INSTAGRAM_MCP_URL` |
 | Gemini | research, plan, verify, image | MCP | `GEMINI_MCP_URL` (cookies optional) |
-| ChatGPT | image (paused) | none (`IMAGE_PROVIDER=gemini`) | `CHATGPT_MCP_URL` or `CHATGPT_BRIDGE_URL` |
+| ChatGPT | not used (pictures are uploaded by hand) | none | `CHATGPT_MCP_URL` or `CHATGPT_BRIDGE_URL` (unused) |
 
 Precedence: MCP URL, then bridge URL, then "missing". A missing transport gives a clear message in Settings.
 
@@ -167,7 +176,7 @@ value after `key=` or `auth=`, so URLs can be pasted exactly as given.
 Required: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `AUTH_SECRET`, `COOKIE_ENCRYPTION_KEY`, `DATABASE_URL`,
 `PUBLIC_APP_URL`.
 Storage: `BLOB_READ_WRITE_TOKEN` (added by Vercel when a Blob store is connected).
-Modes: `PROVIDER_MODE` (`mock` default, or `live`), `IMAGE_PROVIDER` (`gemini` default, or `chatgpt`).
+Modes: `PROVIDER_MODE` (`mock` default, or `live`).
 Servers: `INSTAGRAM_MCP_URL`, `GEMINI_MCP_URL`, `CHATGPT_MCP_URL`, `GEMINI_TOOL_MAP`, `CHATGPT_TOOL_MAP`,
 `GEMINI_BRIDGE_URL`, `CHATGPT_BRIDGE_URL`.
 `VERCEL_URL` is set automatically by Vercel.
@@ -210,6 +219,6 @@ npm run probe:mcp -- instagram   # list the Instagram tools (needs INSTAGRAM_MCP
 
 - **MCP:** Model Context Protocol. Servers expose tools over HTTP.
 - **Transport:** how a provider is reached (`mcp`, `bridge`, or `none`).
-- **Draft:** a generated image, stored privately in Blob under `drafts/{jobId}/{attempt}`.
+- **Draft:** an uploaded picture, stored privately in Blob under `drafts/{jobId}/{attempt}` (a carousel: `{attempt}-{slide}`).
 - **Job:** one topic moving through the pipeline. Its state lives in the `jobs` table.
-- **Generation:** one image attempt. There are at most `MAX_GENERATIONS` (2) before human review.
+- **Pictures:** one per post, or one per carousel slide. Each one is made by hand and uploaded to its slot.
