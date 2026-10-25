@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client";
+import type { PictureParts } from "@/lib/adapters/types";
 import { RUNNABLE, STATE_LABEL, TIMELINE, type JobRow, type State } from "@/lib/jobs/states";
 import { missingPictures } from "@/lib/jobs/pictures";
 import { WORKFLOW_KEYS, WORKFLOW_LABEL, type WorkflowKey } from "@/lib/jobs/workflow";
@@ -59,17 +60,18 @@ async function resizeForUpload(file: File): Promise<Blob> {
   throw new Error("This picture is too large to send, even after resizing.");
 }
 
-/** One picture to make: its prompt, and for a carousel the slide's text it goes with. */
-type Picture = { label: string; detail?: string; prompt: string };
+/** One picture to make: its prompt, its description in parts, and for a carousel the slide's text it goes with. */
+type Picture = { label: string; detail?: string; prompt: string; parts?: PictureParts | null };
 
 function picturesOf(j: JobRow): Picture[] {
   if ((j.data.format ?? "post") !== "carousel") {
-    return [{ label: "Picture", prompt: j.data.imagePrompt ?? j.data.plan?.imagePrompt ?? "" }];
+    return [{ label: "Picture", prompt: j.data.imagePrompt ?? j.data.plan?.imagePrompt ?? "", parts: j.data.pictureParts }];
   }
   return (j.data.carousel?.slides ?? []).map((s, i) => ({
     label: `${i + 1}. ${ROLE_LABEL[s.role]}`,
     detail: [s.figure, s.headline].filter(Boolean).join(" · ") || undefined,
     prompt: s.imagePrompt,
+    parts: s.parts,
   }));
 }
 
@@ -196,6 +198,12 @@ function PicturesPanel({ job, onChanged }: { job: JobRow; onChanged: () => void 
               <span className={`badge ${done ? "ok" : "warn"}`}>{done ? "Uploaded" : "Waiting for the picture"}</span>
             </div>
             <pre className="block">{p.prompt || "(no prompt)"}</pre>
+            {p.parts && (
+              <details>
+                <summary className="muted">The picture as parts (JSON)</summary>
+                <pre className="block">{JSON.stringify(p.parts, null, 2)}</pre>
+              </details>
+            )}
             <div className="row">
               <button disabled={!p.prompt} onClick={() => copy(i, p.prompt)}>
                 {copied === i ? "Copied" : "Copy prompt"}

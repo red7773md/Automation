@@ -38,7 +38,7 @@ export async function analyzeCarousel(job: JobRow, wf: Workflow, models: ModelSe
   let note: string;
   if (wf.skipAnalysis) {
     // Your own prompts, one per line. The first line is the hook.
-    const slides = slidesFromLines(manual.slides ?? "", count);
+    const slides = slidesFromLines(manual.slides ?? "", count, design.shape);
     plan = {
       analysis: (manual.analysis ?? (d.report ?? "").slice(0, ANALYSIS_EXCERPT)).trim(),
       styleGuide: "",

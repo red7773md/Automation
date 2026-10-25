@@ -6,10 +6,19 @@ export const REPORT_FILE = "research-report.md";
 /** Put in the prompt in place of the report when the report is attached as a file. */
 export const REPORT_ATTACHED = `The full research report is attached as ${REPORT_FILE}. Read all of it before answering.`;
 
-export const ANALYZE_PROMPT = `You are preparing an Instagram post from a deep research report.
-Return ONLY a JSON object with exactly these two string keys:
+export const ANALYZE_PROMPT = `You are preparing an Instagram post from a deep research report. A person makes the picture by hand in an image generator, from the description you write, so the description must be concrete and complete.
+Return ONLY a JSON object with exactly these two keys:
 - "analysis": the key findings, what matters most to a general audience, and the angle that will work best on Instagram. Plain language, at most 1500 characters.
-- "imagePrompt": a detailed prompt for an image generator that suits this angle. Square composition. No text, letters or numbers in the image. No real people's faces, logos or brand names.
+- "picture": the picture for this post, as an object with these string keys:
+  - "subject": the one main thing in the picture, in one sentence.
+  - "scene": the setting and concrete details: objects, place, time of day, what is happening. 2 to 4 sentences.
+  - "composition": the framing, the camera angle, where the subject sits, and the open space the picture leaves.
+  - "lighting": the light source, its direction and quality.
+  - "palette": the main colours, in words.
+  - "style": the art or photo style, and how detailed it is.
+  - "mood": the feeling the picture gives.
+  - "avoid": what must not appear: real people's faces, brand names, logos, and text of any kind.
+  Describe the picture in about 400 to 800 characters across its values together. It is one square picture, with no text, letters or numbers in it.
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
 
 Topic: {topic}
@@ -33,23 +42,31 @@ Analysis:
 export const CAROUSEL_PROMPT = `You are planning an Instagram carousel post from a deep research report. The viewer swipes through the slides in order. The app draws the text over each picture, so the pictures contain no text at all.
 Return ONLY a JSON object with exactly these keys:
 - "analysis": the angle of the post and the key findings, in plain language, at most 1500 characters.
-- "styleGuide": one sentence describing the look shared by every slide (colours, style, lighting), at most 300 characters.
+- "styleGuide": one or two sentences on the look shared by every picture: colours, art or photo style, lighting and level of detail. At most 300 characters.
 - "slides": a list of at most {count} objects, in swipe order. Use {count} slides when the topic needs that many. Use fewer when it does not, but never fewer than 3. Each object has:
   - "role": "hook" for the first slide, "cta" for the last slide, "point" for every other slide.
   - "figure": only on the hook slide, one short number or figure from the report that makes the viewer stop, for example "3x" or "70%", at most 16 characters. Use "" when the report has no clear figure, and "" on every other slide.
   - "headline": the short text the app draws large on the picture, at most 60 characters.
   - "body": one short line of essential information under the headline, at most 150 characters. Only the essentials: the full detail belongs in the post's description, not on the slides. May be empty.
-  - "imagePrompt": a prompt for an image generator that makes this slide's picture only, under 400 characters. No text, letters, numbers, logos or brand names in the picture, because the app writes the text. No real people's faces.
+  - "picture": this slide's picture, as an object with these string keys:
+    - "subject": the one main thing in the picture, in one sentence.
+    - "scene": the setting and concrete details: objects, place, time of day, what is happening. 2 to 4 sentences.
+    - "composition": the framing, the camera angle, where the subject sits, and the open space the picture leaves for the text the app draws.
+    - "lighting": the light source, its direction and quality.
+    - "palette": the main colours, in words.
+    - "style": the art or photo style, and how detailed it is.
+    - "mood": the feeling the picture gives.
+    - "avoid": what must not appear: real people's faces, brand names, logos, and text of any kind.
+    Describe each picture in about 400 to 800 characters across its values together. Do not put the slide's headline or body into the picture: the app writes them on it.
 
-Picture rules. The app adds these rules to every slide's image request, so each imagePrompt must match them:
+The app adds these picture rules to every picture, so describe each picture to match them:
 {rules}
-Length limit: each imagePrompt must be under 400 characters. The image tool refuses any prompt over 1000 characters, and the app adds the rules to your imagePrompt. Keep it short and specific.
 
 Rules for the slides:
 - The first slide is the hook. Open a curiosity gap: a figure or a surprising fact, and a question the viewer wants answered. Give the brief point, but not the whole answer, so the viewer swipes to learn more.
 - Each following slide makes one point, in order, and builds on the slide before it. Each headline makes sense when read alone.
 - The last slide is the call to action: a short takeaway and a reason to save or follow the account.
-- Every imagePrompt matches the styleGuide, so the set looks like one post.
+- Every picture matches the styleGuide, so the set looks like one post.
 - Every figure, fact and number must come from the research report. Do not invent any.
 
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.

@@ -1,5 +1,5 @@
 // Pure constants and types. Imported by both server and browser code.
-import type { CarouselPlan, ConfirmedPoint, Plan, QuickSearch, Verdict } from "@/lib/adapters/types";
+import type { CarouselPlan, ConfirmedPoint, PictureParts, Plan, QuickSearch, Verdict } from "@/lib/adapters/types";
 import type { SlideDesign } from "./design";
 import type { ManualInputs, Workflow } from "./workflow";
 
@@ -84,6 +84,7 @@ export type JobData = {
   manual?: ManualInputs; // text typed in by hand for the switched-off steps
   analysis?: string; // Gemini's analysis of the report, written in a new chat
   imagePrompt?: string; // the picture prompt (a carousel: one numbered line per slide)
+  pictureParts?: PictureParts | null; // a single post's picture as parts (shown on the job page)
   plan?: Plan; // caption with hashtags, pinned-comment text and the image prompt
   nextPrompt?: string | null; // older jobs only
   lastPrompt?: string;

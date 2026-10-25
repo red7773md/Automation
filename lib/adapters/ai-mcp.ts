@@ -5,6 +5,7 @@
 import { LABEL, type Provider } from "@/lib/secrets";
 import { withMcp, type McpCallResult, type McpClient, type McpTool } from "./mcp";
 import { parseCarouselPlan } from "@/lib/jobs/carousel";
+import { composePicturePrompt, parseParts, partsFromText } from "@/lib/jobs/picture-prompt";
 import { imageRules } from "@/lib/jobs/design";
 import { parseConfirmReply, parseSearchReply } from "@/lib/jobs/quick";
 import { extractJson, findValue, parseJsonSafe } from "./parse";
@@ -347,9 +348,13 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           cookie,
         );
         const d = extractJson(res.text);
+        // The picture comes as parts. Its prompt is built from them, with the picture rules for a square picture.
+        const typed = String(d.imagePrompt ?? "").trim();
+        const parts = parseParts(d.picture) ?? (typed ? partsFromText(typed) : null);
         return {
           analysis: String(d.analysis ?? ""),
-          imagePrompt: String(d.imagePrompt ?? ""),
+          imagePrompt: parts ? composePicturePrompt(parts, "square") : "",
+          parts: parts ?? undefined,
           reportVia: attached ? "attached" : "pasted",
         };
       }),
@@ -374,7 +379,7 @@ export function createGemini(opts: McpOptions): Providers["gemini"] {
           },
           cookie,
         );
-        return parseCarouselPlan(res.text, slideCount);
+        return parseCarouselPlan(res.text, slideCount, shape ?? "square");
       }),
     search: ({ topic, model }) =>
       r.run("analyze", async (client, route, cookie) => {

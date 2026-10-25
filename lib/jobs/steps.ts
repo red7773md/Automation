@@ -17,6 +17,7 @@ import { quickResearch } from "./quick-steps";
 import { withSources } from "./quick";
 import { COMMENT_TOTAL_LIMIT, splitComment } from "./comments";
 import { missingPictures } from "./pictures";
+import { composePicturePrompt, partsFromText } from "./picture-prompt";
 
 export type StepResult = {
   state: State;
@@ -117,12 +118,14 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       if (isCarousel) return analyzeCarousel(job, wf, models);
       if (!d.report) throw new Error("No research report stored. Retry from the research step.");
       if (wf.skipAnalysis) {
-        const imagePrompt = (manual.imagePrompt ?? "").trim();
-        if (!imagePrompt) throw new Error("No image prompt was written. Add it on the job page, or turn off Skip analysis.");
+        const typed = (manual.imagePrompt ?? "").trim();
+        if (!typed) throw new Error("No image prompt was written. Add it on the job page, or turn off Skip analysis.");
         const analysis = (manual.analysis ?? d.report.slice(0, ANALYSIS_EXCERPT)).trim();
+        // Your prompt is used as the picture, with the picture rules added for a square picture.
+        const pictureParts = partsFromText(typed);
         return {
           state: "generating",
-          data: { analysis, imagePrompt, report: null },
+          data: { analysis, imagePrompt: composePicturePrompt(pictureParts, "square"), pictureParts, report: null },
           note: `Analysis skipped. Your image prompt is used, with ${manual.analysis ? "your analysis text" : "the start of the report as the analysis"}. Make the picture and upload it on the job page.`,
         };
       }
@@ -132,7 +135,7 @@ export async function runStep(job: JobRow, models: ModelSettings = defaultModels
       }
       return {
         state: "generating",
-        data: { analysis: a.analysis.trim(), imagePrompt: a.imagePrompt.trim(), report: null },
+        data: { analysis: a.analysis.trim(), imagePrompt: a.imagePrompt.trim(), pictureParts: a.parts ?? null, report: null },
         note: `Analysis ready from a separate Gemini chat (${a.analysis.length.toLocaleString()} characters). The report was ${
           a.reportVia === "attached"
             ? `attached as ${REPORT_FILE}`

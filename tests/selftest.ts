@@ -225,7 +225,7 @@ async function main() {
 
   const analysed = await gemini.analyze({ topic: "coffee", report: "# Coffee report" });
   assert.equal(analysed.analysis, "Coffee angle for Instagram");
-  assert.equal(analysed.imagePrompt, "a cup of coffee");
+  assert.ok(analysed.imagePrompt.startsWith("Scene: a cup of coffee\nFORMAT:"), "a plain-text picture is kept as the scene, with the rules added");
   const analysisCall = gFake.calls
     .filter((c) => c.name === "gemini_chat")
     .find((c) => String(c.args.prompt).includes('"analysis"'))!;
@@ -513,6 +513,29 @@ async function main() {
     assert.ok(String(sentPaste.args.prompt).includes("Facts about coffee"), "a server without attachments gets the report in the prompt");
     assert.equal("attachments" in sentPaste.args, false);
     ok("analysis: report sent as research-report.md when the tool takes files, pasted otherwise");
+
+    // The picture comes back as parts; the prompt is built from them, with the picture rules for a square picture.
+    const pictureFake = await startFakeMcp({
+      tools: [
+        {
+          name: "gemini_ask",
+          description: "Ask Gemini a question.",
+          inputSchema: { properties: { prompt: { type: "string" } }, required: ["prompt"] },
+          handle: () => ({
+            text: JSON.stringify({
+              analysis: "Coffee angle",
+              picture: { subject: "a cup", scene: "a desk by a window", composition: "centred", lighting: "soft morning light", palette: "warm browns", style: "flat illustration", mood: "calm", avoid: "faces, logos, text" },
+            }),
+          }),
+        },
+      ],
+    });
+    const described = await createGemini({ url: () => pictureFake.url, toolMap: () => '{"analyze":"gemini_ask"}', cookie: async () => null }).analyze({ topic: "coffee", report: "r" });
+    assert.ok(described.imagePrompt.startsWith("Subject: a cup\nScene: a desk by a window\n"), described.imagePrompt);
+    assert.ok(described.imagePrompt.endsWith((await import("@/lib/jobs/design")).imageRules("square")), "the picture rules close every prompt");
+    assert.equal(described.parts?.subject, "a cup", "the parts are kept for the job page");
+    await pictureFake.close();
+    ok("single post prompt: the picture comes as parts, and the prompt is built from them with the square rules");
   } finally {
     await fileServer.close();
     await pasteServer.close();
@@ -558,7 +581,8 @@ async function main() {
     jobWith("analyzing", { workflow: { ...defaultWorkflow(), skipAnalysis: true }, report: "# Report body", manual: { imagePrompt: "a cup", analysis: "the angle" } }),
   );
   assert.equal(noAnalysis.state, "generating");
-  assert.equal(noAnalysis.data?.imagePrompt, "a cup");
+  assert.match(String(noAnalysis.data?.imagePrompt), /^Scene: a cup\nFORMAT: one square picture, exactly 1:1/, "your prompt is the picture, with the rules added");
+  assert.equal((noAnalysis.data?.pictureParts as any)?.scene, "a cup");
   assert.equal(noAnalysis.data?.analysis, "the angle");
   ok("skip analysis: your image prompt and analysis text are used, with no Gemini chat");
 
@@ -634,10 +658,47 @@ async function main() {
   assert.throws(() => carousel.parseCarouselPlan("no json here", 3), /no JSON object/);
   ok("carousel plan: JSON read from a fenced reply, cut to the slide count; the first slide is always the hook");
 
-  assert.deepEqual(
-    carousel.slidesFromLines("\n  a cup of coffee  \n\nsteam rising\n\n", 8).map((s) => [s.role, s.imagePrompt]),
-    [["hook", "a cup of coffee"], ["point", "steam rising"]],
+  const handWrittenSlides = carousel.slidesFromLines("\n  a cup of coffee  \n\nsteam rising\n\n", 8, "portrait");
+  assert.deepEqual(handWrittenSlides.map((s) => [s.role, s.parts?.scene]), [["hook", "a cup of coffee"], ["point", "steam rising"]]);
+  const designRules = (await import("@/lib/jobs/design")).imageRules;
+  assert.ok(handWrittenSlides.every((s) => s.imagePrompt.endsWith(designRules("portrait"))), "your own prompts get the picture rules too, so the shape is kept");
+
+  // Picture prompts: built from parts, the shared look, and the picture rules last; a long prompt keeps the rules.
+  const pp = await import("@/lib/jobs/picture-prompt");
+  const full = { subject: "a cup", scene: "a desk", composition: "centred", lighting: "soft", palette: "brown", style: "flat", mood: "calm", avoid: "faces" };
+  const squarePrompt = pp.composePicturePrompt(full, "square", "Warm flat illustration.");
+  assert.ok(squarePrompt.startsWith("Subject: a cup\nScene: a desk\nComposition: centred\nLighting: soft\nColours: brown\nStyle: flat\n"), squarePrompt);
+  assert.ok(squarePrompt.includes("Look shared by every picture in this set: Warm flat illustration.\nMood: calm\nAvoid: faces\n"));
+  assert.ok(squarePrompt.endsWith(designRules("square")) && squarePrompt.includes("exactly 1:1"));
+  assert.ok(pp.composePicturePrompt(full, "portrait").endsWith(designRules("portrait")) && pp.composePicturePrompt(full, "portrait").includes("exactly 4:5"));
+  const longPrompt = pp.composePicturePrompt({ ...full, scene: "word ".repeat(2000), avoid: "x".repeat(900) }, "portrait", "style ".repeat(200));
+  assert.ok(longPrompt.length <= pp.PROMPT_LIMIT, `the prompt is ${longPrompt.length} characters, over ${pp.PROMPT_LIMIT}`);
+  assert.ok(longPrompt.endsWith(designRules("portrait")), "the rules are kept when the text is cut");
+  assert.equal(pp.parseParts({ mood: "calm" }), null, "a picture with no subject or scene is refused");
+  assert.equal(pp.parseParts("a cup"), null);
+  assert.ok((pp.parseParts({ subject: "x".repeat(500) }) as any).subject.length <= pp.PART_LIMITS.subject, "each part is cut to its limit");
+  assert.equal(pp.parseParts({ subject: "a cup[cite: 1]" })?.subject, "a cup", "citation markers are removed from the parts");
+  ok("picture prompts: built from parts; the shared look and the shape's rules are added; long text is cut but the rules are kept");
+
+  const structured = carousel.parseCarouselPlan(
+    JSON.stringify({
+      analysis: "a",
+      styleGuide: "Warm flat illustration.",
+      slides: [
+        { role: "hook", figure: "3x", headline: "Why coffee?", body: "", picture: full },
+        { role: "cta", headline: "Save this", body: "", picture: { subject: "a book", scene: "a shelf" } },
+      ],
+    }),
+    2,
+    "portrait",
   );
+  assert.equal(structured.slides[0].parts?.subject, "a cup", "the parts are kept with the slide");
+  assert.ok(structured.slides[0].imagePrompt.startsWith("Subject: a cup"), "the prompt is built from the parts");
+  assert.ok(structured.slides[1].imagePrompt.includes("Look shared by every picture in this set: Warm flat illustration."), "every slide shares the look");
+  assert.ok(structured.slides.every((s) => s.imagePrompt.endsWith(designRules("portrait"))), "every slide's prompt ends with the portrait rules");
+  assert.ok(!structured.slides[0].imagePrompt.includes("Why coffee?"), "the slide's words stay out of the picture");
+  assert.equal(structured.slides[0].figure, "3x");
+  ok("carousel plan: each slide's picture is built from its parts, with the shared look and the shape's rules");
   assert.throws(() => carousel.slidesFromLines("only one", 8), /at least two lines/);
   assert.throws(() => carousel.slidesFromLines("a\nb\nc", 2), /3 image prompts, but this carousel has 2 slides/);
   ok("hand-written slides: one prompt per line, first line is the hook, blank lines ignored, too many refused");
@@ -687,8 +748,7 @@ async function main() {
     assert.ok(String(sent.args.prompt).includes("at most 8"), "the prompt carries the chosen slide count");
     assert.ok(String(sent.args.prompt).includes("exactly 1:1"), "the prompt carries the picture rules");
     assert.ok(String(sent.args.prompt).includes("NO TEXT"), "the prompt forbids text before any prompt is written: the app draws it");
-    assert.ok(String(sent.args.prompt).includes("under 400 characters"), "the prompt states the length limit");
-    assert.ok(String(sent.args.prompt).includes("1000 characters"), "the prompt states the tool's limit");
+    assert.ok(String(sent.args.prompt).includes('"picture"') && String(sent.args.prompt).includes('"subject"'), "each picture is asked for as parts: subject, scene, and so on");
     assert.deepEqual(sent.args.attachments, [{ name: "research-report.md", content_base64: Buffer.from("# Coffee report\n\nFacts.").toString("base64") }]);
     assert.equal((await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3 })).slides.length, 3);
     await cg.analyzeCarousel({ topic: "coffee", report: "r", slideCount: 3, shape: "portrait" });
@@ -1034,7 +1094,7 @@ async function main() {
     2,
   );
   assert.equal(citedPlan.slides[0].body, "Retrieval helps.");
-  assert.equal(citedPlan.slides[0].imagePrompt, "a brain.");
+  assert.equal(citedPlan.slides[0].parts?.scene, "a brain.", "a plain-text picture from an older reply is still read");
   assert.ok(!JSON.stringify(citedPlan).includes("[cite") && !citedPlan.slides[0].imagePrompt.includes("[1]"), "citation markers never reach the picture");
   ok("slide text: citation markers are removed from the slide text and the picture prompt");
 

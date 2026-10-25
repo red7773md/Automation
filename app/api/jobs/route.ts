@@ -51,7 +51,7 @@ export const POST = adminRoute(async (req) => {
   if (missing) return json({ error: missing }, 400);
   if (format === "carousel" && workflow.skipAnalysis) {
     try {
-      slidesFromLines(manual.slides ?? "", slideCount); // checked now, so a bad list fails here and not mid-job
+      slidesFromLines(manual.slides ?? "", slideCount, design?.shape ?? "square"); // checked now, so a bad list fails here and not mid-job
     } catch (err) {
       return json({ error: errorMessage(err) }, 400);
     }

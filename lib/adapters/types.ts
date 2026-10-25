@@ -6,9 +6,25 @@ export type Plan = {
   imagePrompt: string; // the prompt the image was made from
 };
 
+/**
+ * One picture described in parts. The app joins the parts into the prompt that is copied into the image tool, and
+ * always adds the picture rules, so the shape and the no-text rule are kept.
+ */
+export type PictureParts = {
+  subject: string; // the one main thing in the picture
+  scene: string; // the setting and concrete details
+  composition: string; // framing, camera angle, where the subject sits, the open space
+  lighting: string; // the light: source, direction, quality
+  palette: string; // the main colours
+  style: string; // the art or photo style and its detail
+  mood: string; // the feeling the picture gives
+  avoid: string; // what must not appear
+};
+
 export type Analysis = {
   analysis: string; // the angle and key points, written in a new Gemini chat
-  imagePrompt: string; // image prompt that suits the angle
+  imagePrompt: string; // the picture prompt, built from the parts, with the picture rules added
+  parts?: PictureParts; // the picture as described in parts, kept for the job page
   reportVia?: "attached" | "pasted"; // how the report reached Gemini, for the log
 };
 
@@ -23,7 +39,8 @@ export type Slide = {
   figure?: string; // hook only: a short number from the research, drawn large over the picture
   headline: string; // large text drawn over the picture; empty when the slide was written by hand
   body: string; // a smaller line under the headline
-  imagePrompt: string; // describes the picture only: the app draws all the text
+  imagePrompt: string; // the picture prompt, built from the parts with the picture rules: the app draws all the text
+  parts?: PictureParts; // the same picture as described in parts
 };
 
 /** What a carousel analysis returns: the angle, the look shared by every slide, and the slides in swipe order. */
