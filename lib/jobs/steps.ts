@@ -34,14 +34,28 @@ const MAX_TEXT = 2200; // Instagram caption and comment limit
 const POINTER = "👇 Full details in the pinned comment";
 const ANALYSIS_EXCERPT = 1500; // used as the analysis when you skip analysis and write no analysis text
 
+const HASHTAGS_MAX = 5; // research on Instagram reach favours 3 to 5 relevant hashtags over many
+
+/** Takes the hashtags off the last line of a caption, when that line holds only hashtags. */
+function splitHashtags(caption: string): { text: string; tags: string[] } {
+  const lines = caption.split("\n");
+  const words = lines[lines.length - 1].trim().split(/\s+/).filter(Boolean);
+  if (lines.length > 1 && words.length && words.every((w) => /^#\S+$/.test(w))) {
+    return { text: lines.slice(0, -1).join("\n").trim(), tags: words };
+  }
+  return { text: caption, tags: [] };
+}
+
 export function normalizePlan(p: Partial<Plan>): Plan {
   const missing = (["caption", "commentBody", "imagePrompt"] as const).filter((k) => !p[k]?.trim());
   if (missing.length) throw new Error(`The caption step returned an incomplete result, missing: ${missing.join(", ")}`);
 
-  let caption = p.caption!.trim();
-  const room = MAX_TEXT - POINTER.length - 2;
-  if (caption.length > room) caption = caption.slice(0, room);
-  if (!/pinned comment/i.test(caption)) caption = `${caption}\n\n${POINTER}`;
+  // The hashtags stay on their own last line, at most five. The pointer goes above them.
+  const { text, tags } = splitHashtags(p.caption!.trim());
+  const tagLine = tags.slice(0, HASHTAGS_MAX).join(" ");
+  const room = MAX_TEXT - POINTER.length - tagLine.length - 6; // room for the separators
+  const body = text.length > room ? text.slice(0, room) : text;
+  const caption = [body, /pinned comment/i.test(body) ? "" : POINTER, tagLine].filter(Boolean).join("\n\n");
 
   return {
     caption,

@@ -45,6 +45,14 @@ async function main() {
   assert.ok(normalizePlan({ caption: "a".repeat(5000), commentBody: "b", imagePrompt: "c" }).caption.length <= 2200);
   ok("plan normalisation: pointer added, limits enforced, incomplete plans rejected");
 
+  const tagged = normalizePlan({ caption: "Hook line.\n\n#one #two #three #four #five #six #seven", commentBody: "b", imagePrompt: "c" });
+  assert.equal(tagged.caption, "Hook line.\n\n👇 Full details in the pinned comment\n\n#one #two #three #four #five");
+  const hookOnly = normalizePlan({ caption: "Only a hook", commentBody: "b", imagePrompt: "c" });
+  assert.equal(hookOnly.caption, "Only a hook\n\n👇 Full details in the pinned comment");
+  const { CAPTION_PROMPT } = await import("@/lib/adapters/prompts");
+  assert.ok(CAPTION_PROMPT.includes("3 to 5 hashtags") && !CAPTION_PROMPT.includes("8 to 12"), "caption prompt asks for 3 to 5 hashtags");
+  ok("hashtags: at most five, kept on the last line, pointer above them; caption prompt asks for 3 to 5");
+
   const r = redact("GET https://host/mcp?auth=SECRETKEY123&x=1 failed; cookie __Secure-1PSID=zzz123; Bearer abc.def");
   assert.ok(!r.includes("SECRETKEY123") && !r.includes("zzz123") && !r.includes("abc.def"), r);
   assert.ok(redact(`leak ${process.env.AUTH_SECRET}`).includes("[AUTH_SECRET]"));

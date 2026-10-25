@@ -29,7 +29,7 @@ Research report:
 
 export const CAPTION_PROMPT = `You are writing the text for an Instagram post. The image is already made, and the analysis below describes the angle.
 Return ONLY a JSON object with exactly these two string keys:
-- "caption": a short hook (at most two sentences), then 8 to 12 relevant hashtags on the last line, chosen to reach people searching for this topic. Keep the whole caption under 1200 characters.
+- "caption": a short hook (at most two sentences), then 3 to 5 hashtags on the last line. Choose hashtags that match this topic and the words people search for: one or two broad tags, one or two medium tags and one niche tag. Never use generic tags such as #love, #instagood or #photooftheday. Keep the whole caption under 1200 characters.
 - "commentBody": the detailed description for the pinned comment: factual and readable, short paragraphs or bullet lines, at most 3000 characters. The app splits a long description into numbered comments, so write it in full. Do not repeat the hashtags here.
 Do not wrap the JSON in markdown fences and do not write anything outside the JSON.
 
